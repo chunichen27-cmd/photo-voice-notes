@@ -67,8 +67,17 @@ const paths = await p.evaluate(async () => {
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v5') fail('cache ' + paths.shells.join());
-if (!paths.urls.some(u => u.endsWith('/config.js'))) fail('config.js not precached');
+if (paths.shells.join() !== 'shell-v6') fail('cache ' + paths.shells.join());
+for (const name of ['config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
+  if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
+}
+const manifest = await (await fetch(new URL('manifest.webmanifest', base))).json();
+if (manifest.theme_color !== '#9d1e19' || manifest.background_color !== '#9d1e19') fail('theme ' + manifest.theme_color);
+const purposes = manifest.icons.map(i => i.purpose + ' ' + i.src).sort();
+if (JSON.stringify(purposes) !== JSON.stringify(['any icon-192.png', 'any icon-512.png', 'maskable icon-512-maskable.png'])) fail('icons ' + purposes.join(','));
+const apple = await p.locator('link[rel="apple-touch-icon"]').getAttribute('href');
+const icon = await p.locator('link[rel="icon"]').first().getAttribute('href');
+if (apple !== 'apple-touch-icon.png' || !icon.includes('favicon')) fail('head icons ' + apple + ' ' + icon);
 
 const today = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
 if (await p.inputValue('#folderName') !== today) fail('default folder name ' + await p.inputValue('#folderName'));
