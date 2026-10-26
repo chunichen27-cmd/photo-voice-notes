@@ -1,0 +1,28 @@
+import {chromium} from 'playwright-core';
+const base = process.env.BASE_URL || 'http://localhost:8765/';
+const b=await chromium.launch({executablePath:'/usr/bin/google-chrome',args:['--no-sandbox','--disable-dev-shm-usage']});
+const ctx=await b.newContext({permissions:['geolocation'],geolocation:{latitude:25.0478,longitude:121.5170,accuracy:10}});
+const p=await ctx.newPage();p.on('console',m=>console.log('console:',m.text()));p.on('pageerror',e=>console.log('ERR',e.message));
+await p.goto(base);
+const paths=await p.evaluate(async()=>{
+  const reg=await navigator.serviceWorker.ready;
+  const manifestHref=document.querySelector('link[rel="manifest"]').href;
+  const manifest=await (await fetch(manifestHref)).json();
+  return {href:location.href, sw:reg.scope, start:new URL(manifest.start_url, manifestHref).href, scope:new URL(manifest.scope, manifestHref).href};
+});
+const expected=new URL('./', base).href;
+console.log('paths:', JSON.stringify(paths));
+if(paths.sw!==expected || paths.start!==expected || paths.scope!==expected) throw new Error('path mismatch, expected '+expected);
+console.log('SW ready');
+await p.click('#dl');await p.waitForFunction(()=>localStorage.modelReady,null,{timeout:600000});
+console.log('model:',await p.textContent('#mstat'));
+const run=()=>p.evaluate(async()=>{const res=await fetch('sample.wav');if(!res.ok)throw new Error('sample.wav '+res.status);const b=await res.blob();const t=Date.now();const r=await transcribe(b);if(r.type==='error')throw new Error(r.msg||'transcribe error');return [toTW(r.text||''),(Date.now()-t)/1000];});
+console.log('online:',await run());
+await p.setInputFiles('#cam','docs/icon-192.png');await p.waitForTimeout(2000);
+console.log('entry:',(await p.textContent('#list')).slice(0,120));
+await ctx.setOffline(true);await p.reload();await p.waitForTimeout(3000);
+await p.waitForFunction(()=>document.querySelector('#mstat').textContent.includes('就緒'),null,{timeout:120000});
+console.log('offline reload ok:',await p.textContent('#mstat'));
+console.log('offline:',await run());
+console.log('cache size MB:',await p.evaluate(async()=>(await navigator.storage.estimate()).usage/1e6));
+await b.close();

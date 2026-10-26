@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-Hant-TW"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f6feb"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="離線筆記"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest"><title>離線筆記</title>
+<style>body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;max-width:640px;margin:auto}
+button,label.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4px 2px;border-radius:8px;border:0;background:#1f6feb;color:#fff}
+button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0}
+img{max-width:100%;border-radius:8px}textarea{width:100%;min-height:80px;font-size:16px;box-sizing:border-box}small{color:#666}</style></head>
+<body><h2>離線筆記</h2>
+<div id="model" class="card"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button id="dl">下載模型（約 80 MB，僅需一次）</button></div>
+<label class="btn">📷 拍照新增<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
+<button id="expAll" class="sec">匯出全部 .txt</button><button id="zipAll" class="sec">匯出全部 .zip（含照片錄音）</button>
+<div id="list"></div><script src="vendor/cn2t.js"></script><script src="vendor/jszip.min.js"></script><script src="app.js"></script></body></html>
