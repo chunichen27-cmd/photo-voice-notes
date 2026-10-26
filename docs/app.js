@@ -173,7 +173,7 @@ async function attachRecording(id,blob){
 }
 
 const geo=()=>new Promise(ok=>{if(!navigator.geolocation)return ok(null);navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),err=>ok({error:err.message}),{enableHighAccuracy:true,timeout:30000,maximumAge:0});});
-const PHOTO_EDGE=2560;
+const PHOTO_EDGE=4000;
 const PHOTO_MAX=5*1024*1024;
 async function readExifOrientation(file){
   try{
@@ -308,20 +308,40 @@ async function compressPhoto(file,opts){
   return blob;
 }
 function setCapMsg(t){const n=$('#capmsg');if(n)n.textContent=t||'';}
+let thumbUrl='';
+function setRecThumb(blob){
+  const img=$('#recthumb');
+  if(!img) return;
+  if(thumbUrl) URL.revokeObjectURL(thumbUrl);
+  thumbUrl='';
+  if(!blob){img.removeAttribute('src');return;}
+  thumbUrl=URL.createObjectURL(blob);
+  img.src=thumbUrl;
+}
+function captureStamp(file){
+  const now=Date.now();
+  const modified=file&&file.lastModified;
+  if(modified&&modified>now-120000&&modified<=now+5000) return modified;
+  return now;
+}
 $('#cam').onchange=async ev=>{
+  onVisible();
   const f=ev.target.files&&ev.target.files[0];
   ev.target.value='';
   if(!f) return;
-  if(rec){setCapMsg('請先按停止，再拍下一張。');return;}
+  if(rec){setCapMsg('請先按停止錄音，再拍下一張。');return;}
   await takePhoto(f);
 };
 async function takePhoto(file){
+  let ts=captureStamp(file);
   setCapMsg('處理照片…');
   let photo=file;
   try{photo=await compressPhoto(file);}
   catch(e){setCapMsg('照片無法壓縮，已用原檔。');}
-  const ts=Date.now();
+  setRecThumb(photo);
   const folder=await activeFolder();
+  const used=new Set((await allNotes()).map(n=>n.id));
+  while(used.has(ts)) ts+=1;
   await putNote({id:ts,ts,photo,loc:{pending:true},transcript:'',folderId:folder.id});
   voiceNoteId=null;
   const locPromise=geo().then(loc=>updateNote(ts,cur=>{cur.loc=loc;}));
@@ -366,12 +386,12 @@ function planFiles(notes){
 function txt(e, photoNames){
   const names=photoNames||planFiles([e])[0].photos.map(p=>p.name);
   const lines=[`時間：${fmt(e.ts)}（台北時間）`];
+  for(const n of names) lines.push('照片：'+n);
+  lines.push(`逐字稿：\n${e.transcript||'（無）'}`);
   if(e.loc&&e.loc.lat!=null){
     lines.push(`位置：${e.loc.lat.toFixed(6)}, ${e.loc.lng.toFixed(6)}（精確度 ±${Math.round(e.loc.acc)} 公尺）`);
     lines.push(`地圖：${mapl(e.loc)}`);
   }else lines.push('位置：無法取得');
-  for(const n of names) lines.push('照片：'+n);
-  lines.push(`逐字稿：\n${e.transcript||'（無）'}`);
   return lines.join('\n');
 }
 function folderTxt(folder,notes){
@@ -558,9 +578,10 @@ async function record(e){
 function paintDock(){
   const recording=!!rec;
   const fallback=!recording&&!!voiceNoteId;
-  const halt=$('#halt'), speak=$('#speak'), shoot=$('#shoot'), ind=$('#recind');
+  const halt=$('#halt'), speak=$('#speak'), shoot=$('#shoot'), ind=$('#recind'), thumb=$('#recthumb');
   if(halt) halt.hidden=!recording;
   if(ind) ind.hidden=!recording;
+  if(thumb) thumb.hidden=!recording||!thumb.getAttribute('src');
   if(speak) speak.hidden=!fallback;
   if(shoot) shoot.hidden=recording||fallback;
 }
@@ -851,9 +872,9 @@ async function releaseWake(){
   wakeLock=null;
 }
 function onVisible(){
-  if(document.visibilityState!=='visible'||!activeTrackId) return;
-  void acquireWakeLock();
+  if(document.visibilityState==='hidden'||!activeTrackId) return;
   startWatch();
+  void acquireWakeLock();
 }
 function beginLive(track, pts){
   const sorted=(pts||[]).slice().sort((a,b)=>a.time-b.time);
@@ -869,6 +890,8 @@ function beginLive(track, pts){
   paintLive();
 }
 async function startTrack(){
+  unlockAudio();
+  void armMic().catch(()=>setCapMsg('尚未取得麥克風。拍照後若沒有開始錄音，請按「開始錄音」。'));
   if(activeTrackId) return;
   if(openTrackId) return resumeTrack(openTrackId);
   if(!navigator.geolocation){setTrackMsg('這台裝置沒有提供定位。');return;}
@@ -880,6 +903,8 @@ async function startTrack(){
   await render();
 }
 async function resumeTrack(id){
+  unlockAudio();
+  void armMic().catch(()=>{});
   if(activeTrackId) return;
   if(!navigator.geolocation){setTrackMsg('這台裝置沒有提供定位。');return;}
   activeTrackId=id;
@@ -922,6 +947,7 @@ async function finishTrack(id){
     await putTrack(t);
   }
   lastPoint=null;
+  if(!rec) releaseMic();
   await render();
 }
 async function onGeoError(err){
@@ -938,6 +964,7 @@ async function onGeoError(err){
     if(t){t.recording=false;t.stopped=Date.now();await putTrack(t);}
   }
   setTrackMsg('定位被拒絕。請允許這個網站使用定位後，再按開始記錄軌跡。');
+  if(!rec) releaseMic();
   await render();
 }
 async function exportTrack(id){
@@ -1097,6 +1124,7 @@ async function saveClient(){
   $('#saveClient').onclick=saveClient;
   if($('#startTrack')) $('#startTrack').onclick=()=>startTrack().catch(err=>setTrackMsg(err.message));
   if($('#stopTrack')) $('#stopTrack').onclick=()=>finishTrack().catch(err=>setTrackMsg(err.message));
+  if($('#sendDay')) $('#sendDay').onclick=()=>onUpload(localStorage.activeFolder||DEFAULT_FOLDER);
   if($('#shoot')) $('#shoot').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
   if($('#speak')){
     $('#speak').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
@@ -1111,8 +1139,8 @@ async function saveClient(){
     };
   }
   if($('#halt')) $('#halt').onclick=()=>{unlockAudio();if(rec&&rec.state==='recording'){try{rec.requestData();}catch(e){} rec.stop();}};
-  document.addEventListener('visibilitychange',onVisible);
-  window.addEventListener('pagehide',releaseMic);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') onVisible();});
+  window.addEventListener('pageshow',()=>onVisible());
   setInterval(()=>{if(activeTrackId) paintLive();},1000);
   window.addEventListener('online',()=>{flushOutbox();});
   await render();

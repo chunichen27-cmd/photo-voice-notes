@@ -5,9 +5,9 @@
 <link rel="manifest" href="manifest.webmanifest"><title>離線筆記</title>
 <style>
 [hidden]{display:none !important}
-body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;padding-bottom:calc(180px + env(safe-area-inset-bottom));max-width:640px;margin:auto}
+body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;padding-bottom:calc(240px + env(safe-area-inset-bottom));max-width:640px;margin:auto}
 button,label.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4px 2px;border-radius:8px;border:0;background:#1f6feb;color:#fff}
-button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0;scroll-margin-bottom:180px}
+button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0;scroll-margin-bottom:240px}
 img{max-width:100%;border-radius:8px}textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
 textarea{min-height:80px}small,.hint{color:#666}
 .active-name{font-size:22px;font-weight:700;margin:4px 0}
@@ -16,7 +16,9 @@ textarea{min-height:80px}small,.hint{color:#666}
 .folder-row{border-top:1px solid #eee;padding:8px 0}
 .fname{font-weight:600;margin-bottom:4px}
 label.field{display:block;margin-top:8px;color:#333}
-#startTrack,#stopTrack{min-height:48px;font-size:18px}
+#startTrack,#stopTrack,#sendDay{min-height:48px;font-size:18px}
+#sendDay{display:block;width:100%;margin-top:8px}
+#recthumb{display:block;width:96px;height:96px;object-fit:cover;border-radius:12px;margin:0 auto 8px;background:#eee}
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .dock-inner{max-width:640px;margin:auto}
 .dock .big{display:block;width:100%;box-sizing:border-box;text-align:center;font-size:28px;font-weight:700;padding:20px 16px;margin:0;border-radius:16px}
@@ -29,13 +31,14 @@ label.field{display:block;margin-top:8px;color:#333}
 <div class="card">
   <div>目前資料夾</div>
   <div id="activeName" class="active-name">未分類</div>
-  <div class="hint">先選這一天或這一趟，開始記錄軌跡，再用下方的拍照。照片的說明會自動從語音轉成文字。</div>
+  <div class="hint">先選這一天或這一趟，開始記錄軌跡，再用下方的拍照。拍完會直接錄音，停止後變成這張照片的圖說。一天結束再停止軌跡、送到記錄高高手。</div>
   <div id="trackbox">
     <div id="trackstat" class="track-live"></div>
     <button type="button" id="startTrack">開始記錄軌跡</button>
     <button type="button" id="stopTrack" hidden>停止記錄軌跡</button>
+    <button type="button" id="sendDay">☁️ 送到記錄高高手</button>
     <div id="trackresume" hidden></div>
-    <p class="hint" id="tracknote">iPhone 在鎖定螢幕或切到背景時會暫停定位。記錄時請保持這個畫面開著，不要鎖定螢幕。</p>
+    <p class="hint" id="tracknote">iPhone 打開相機或鎖定螢幕時會暫停定位。回到這個畫面會自動繼續記。請不要鎖定螢幕。</p>
     <div id="tracklist"></div>
     <div id="trackmsg" class="hint"></div>
   </div>
@@ -54,8 +57,9 @@ label.field{display:block;margin-top:8px;color:#333}
   <button type="button" id="saveClient" class="sec">儲存 Client ID</button>
 </div>
 <div id="dock" class="dock"><div class="dock-inner">
+  <img id="recthumb" alt="這張照片" hidden>
   <div id="recind" class="rec-ind" hidden><span class="dot"></span>錄音中</div>
-  <button type="button" id="halt" class="big rec-on" hidden>⏹ 停止</button>
+  <button type="button" id="halt" class="big rec-on" hidden>停止錄音</button>
   <button type="button" id="speak" class="big" hidden>🎙 開始錄音</button>
   <label id="shoot" class="big">📷 拍照<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
   <div id="capmsg" class="hint"></div>

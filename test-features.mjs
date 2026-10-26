@@ -67,7 +67,7 @@ const paths = await p.evaluate(async () => {
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v8') fail('cache ' + paths.shells.join());
+if (paths.shells.join() !== 'shell-v9') fail('cache ' + paths.shells.join());
 for (const name of ['config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
@@ -183,7 +183,7 @@ const shaped = await p.evaluate(() => {
 });
 if (!shaped.text.includes('時間：2026-10-26 12:37:05（台北時間）')) fail(shaped.text);
 if (shaped.bare.includes('照片：')) fail('photo line without a photo');
-if (!shaped.text.includes('照片：20261026_123705_照片.jpg') || shaped.names[0] !== '20261026_123705_照片.jpg') fail(shaped.names.join(','));
+if (!shaped.text.includes('照片：20261026_123705_照片.jpg\n逐字稿：\n山路') || shaped.names[0] !== '20261026_123705_照片.jpg') fail(shaped.text);
 const lines2 = [...shaped.text2.matchAll(/照片：(\S+)/g)].map(m => m[1]);
 if (shaped.names2.length !== 2 || new Set(shaped.names2).size !== 2 || lines2.join() !== shaped.names2.join()) fail('multi photo ' + lines2.join(','));
 if (shaped.base !== '20261026_打鐵寮古道.zip') fail('base name ' + shaped.base);
@@ -492,6 +492,13 @@ const compressed = await p.evaluate(async () => {
   const big = await paint(3000, 1600);
   const shrunk = await pvn.compressPhoto(big);
   const bmp = await createImageBitmap(shrunk);
+  const wideC = document.createElement('canvas');
+  wideC.width = 4800; wideC.height = 1200;
+  const wg = wideC.getContext('2d');
+  wg.fillStyle = '#c45c3a';
+  wg.fillRect(0, 0, 4800, 1200);
+  const wide = await new Promise(ok => wideC.toBlob(ok, 'image/jpeg', 0.92));
+  const capped = await createImageBitmap(await pvn.compressPhoto(wide));
   const tight = await pvn.compressPhoto(big, {maxBytes: 20000, maxEdge: 800});
   const raw = await paint(80, 30);
   const bytes = new Uint8Array(await raw.arrayBuffer());
@@ -521,24 +528,28 @@ const compressed = await p.evaluate(async () => {
   const top = ctx.getImageData(Math.floor(upright.width / 2), 2, 1, 1).data;
   return {
     type: shrunk.type, bytes: shrunk.size, w: bmp.width, h: bmp.height,
+    capW: capped.width, capH: capped.height,
     tight: tight.size, orient, fw: upright.width, fh: upright.height, top: [top[0], top[1], top[2]]
   };
 });
 console.log('photo compress', JSON.stringify(compressed));
 if (compressed.type !== 'image/jpeg' || compressed.bytes >= 5 * 1024 * 1024) fail('jpeg size ' + compressed.bytes);
-if (Math.max(compressed.w, compressed.h) > 2560 || Math.max(compressed.w, compressed.h) < 2500) fail('long edge ' + compressed.w + 'x' + compressed.h);
+if (Math.max(compressed.w, compressed.h) !== 3000) fail('long edge ' + compressed.w + 'x' + compressed.h);
+if (compressed.capW !== 4000 || compressed.capH !== 1000) fail('cap edge ' + compressed.capW + 'x' + compressed.capH);
 if (compressed.tight >= 20000) fail('quality not reduced ' + compressed.tight);
 if (compressed.orient !== 6 || compressed.fw >= compressed.fh) fail('orientation ' + JSON.stringify(compressed));
 if (compressed.top[2] <= compressed.top[0]) fail('blue strip not rotated to the top ' + compressed.top.join(','));
 
 await p.evaluate(() => { window.__micMode = 'ok'; window.__micCalls = 0; window.__transcribeStub = async () => ({type: 'result', text: '這是圖說'}); localStorage.modelReady = '1'; });
 await p.click('#startTrack');
-await p.waitForFunction(() => document.querySelector('#trackstat').textContent.includes('錄製中'));
+await p.waitForFunction(() => window.__micCalls === 1 && document.querySelector('#trackstat').textContent.includes('錄製中'));
 await p.locator('#shoot').dispatchEvent('pointerdown');
-await p.waitForFunction(() => window.__micCalls === 1);
+if (await p.evaluate(() => window.__micCalls) !== 1) fail('photo button asked for the mic again');
+const watchedBeforePhoto = await p.evaluate(() => window.__watched);
 await p.setInputFiles('#cam', 'docs/icon-192.png');
-await p.waitForFunction(() => !document.querySelector('#halt').hidden && !document.querySelector('#recind').hidden && document.querySelector('#recind').innerText.includes('錄音中') && document.querySelector('#shoot').hidden);
+await p.waitForFunction(() => !document.querySelector('#halt').hidden && document.querySelector('#halt').textContent.includes('停止錄音') && !document.querySelector('#recind').hidden && document.querySelector('#recind').innerText.includes('錄音中') && document.querySelector('#shoot').hidden && !document.querySelector('#recthumb').hidden);
 if (await p.evaluate(() => window.__micCalls) !== 1) fail('photo change asked for the mic again');
+if ((await p.evaluate(() => window.__watched)) <= watchedBeforePhoto) fail('returning from the camera did not resume GPS');
 await p.click('#halt');
 await p.waitForFunction(() => {
   const card = document.querySelector('#list .card');
