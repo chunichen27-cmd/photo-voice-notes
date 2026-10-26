@@ -173,18 +173,170 @@ async function attachRecording(id,blob){
 }
 
 const geo=()=>new Promise(ok=>{if(!navigator.geolocation)return ok(null);navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),err=>ok({error:err.message}),{enableHighAccuracy:true,timeout:30000,maximumAge:0});});
+const PHOTO_EDGE=2560;
+const PHOTO_MAX=5*1024*1024;
+async function readExifOrientation(file){
+  try{
+    const buf=await file.slice(0,131072).arrayBuffer();
+    const v=new DataView(buf);
+    if(v.byteLength<4||v.getUint16(0)!==0xFFD8) return 1;
+    let o=2;
+    while(o+4<v.byteLength){
+      const marker=v.getUint16(o);
+      if(marker===0xFFDA||marker===0xFFD9) break;
+      if((marker&0xFF00)!==0xFF00) break;
+      const size=v.getUint16(o+2);
+      if(marker===0xFFE1&&size>=16&&o+10<v.byteLength&&v.getUint32(o+4)===0x45786966){
+        const n=exifOrient(v,o+10);
+        if(n) return n;
+      }
+      if(size<2) break;
+      o+=2+size;
+    }
+  }catch(e){}
+  return 1;
+}
+function exifOrient(v,tiff){
+  if(tiff+8>v.byteLength) return 0;
+  const le=v.getUint16(tiff)===0x4949;
+  const ifd=tiff+v.getUint32(tiff+4,le);
+  if(ifd+2>v.byteLength) return 0;
+  const n=v.getUint16(ifd,le);
+  for(let i=0;i<n;i++){
+    const e=ifd+2+i*12;
+    if(e+12>v.byteLength) break;
+    if(v.getUint16(e,le)===0x0112){
+      const val=v.getUint16(e+8,le);
+      return val>=1&&val<=8?val:1;
+    }
+  }
+  return 0;
+}
+let knownExif=null;
+function exifProbeBlob(){
+  const c=document.createElement('canvas');
+  c.width=8; c.height=2;
+  const g=c.getContext('2d');
+  g.fillStyle='#f00'; g.fillRect(0,0,8,2);
+  return new Promise((ok,no)=>c.toBlob(async b=>{
+    try{
+      const bytes=new Uint8Array(await b.arrayBuffer());
+      const tiff=new Uint8Array([0x49,0x49,0x2a,0x00,0x08,0x00,0x00,0x00,0x01,0x00,0x12,0x01,0x03,0x00,0x01,0x00,0x00,0x00,0x06,0x00,0x00,0x00,0x00,0x00,0x00,0x00]);
+      const size=2+6+tiff.length;
+      const app=new Uint8Array(2+size);
+      app[0]=0xff; app[1]=0xe1; app[2]=size>>8; app[3]=size&255;
+      app.set([0x45,0x78,0x69,0x66,0,0],4);
+      app.set(tiff,10);
+      const out=new Uint8Array(bytes.length+app.length);
+      out[0]=0xff; out[1]=0xd8; out.set(app,2); out.set(bytes.subarray(2),2+app.length);
+      ok(new Blob([out],{type:'image/jpeg'}));
+    }catch(e){no(e);}
+  },'image/jpeg',0.92));
+}
+async function browserAppliesExif(){
+  if(knownExif!==null) return knownExif;
+  try{
+    if(typeof createImageBitmap!=='function'){knownExif=true;return true;}
+    const bmp=await createImageBitmap(await exifProbeBlob());
+    knownExif=bmp.height>bmp.width;
+    if(bmp.close) bmp.close();
+  }catch(e){knownExif=true;}
+  return knownExif;
+}
+async function loadBitmap(file){
+  const manual=!(await browserAppliesExif());
+  if(typeof createImageBitmap==='function'){
+    try{return {source:await createImageBitmap(file), raw:manual};}
+    catch(e){}
+  }
+  const source=await new Promise((ok,no)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);ok(img);};
+    img.onerror=()=>{URL.revokeObjectURL(url);no(new Error('無法讀取照片'));};
+    img.src=url;
+  });
+  return {source, raw:manual};
+}
+function canvasBlob(canvas,quality){
+  return new Promise((ok,no)=>canvas.toBlob(b=>b?ok(b):no(new Error('無法壓縮照片')),'image/jpeg',quality));
+}
+function drawOriented(source,orientation,edge){
+  const w=source.width,h=source.height;
+  const swap=orientation>=5&&orientation<=8;
+  const ow=swap?h:w, oh=swap?w:h;
+  const long=Math.max(ow,oh);
+  const scale=long>edge?edge/long:1;
+  const cw=Math.max(1,Math.round(ow*scale)), ch=Math.max(1,Math.round(oh*scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=cw; canvas.height=ch;
+  const ctx=canvas.getContext('2d');
+  ctx.setTransform(scale,0,0,scale,0,0);
+  switch(orientation){
+    case 2: ctx.transform(-1,0,0,1,ow,0); break;
+    case 3: ctx.transform(-1,0,0,-1,ow,oh); break;
+    case 4: ctx.transform(1,0,0,-1,0,oh); break;
+    case 5: ctx.transform(0,1,1,0,0,0); break;
+    case 6: ctx.transform(0,1,-1,0,ow,0); break;
+    case 7: ctx.transform(0,-1,-1,0,ow,oh); break;
+    case 8: ctx.transform(0,-1,1,0,0,oh); break;
+    default: break;
+  }
+  ctx.drawImage(source,0,0,w,h);
+  return canvas;
+}
+async function compressPhoto(file,opts){
+  const maxBytes=(opts&&opts.maxBytes)||PHOTO_MAX;
+  let edge=(opts&&opts.maxEdge)||PHOTO_EDGE;
+  const loaded=await loadBitmap(file);
+  const source=loaded.source;
+  let orientation=1;
+  try{if(loaded.raw) orientation=await readExifOrientation(file);}catch(e){orientation=1;}
+  let quality=0.85;
+  let blob=await canvasBlob(drawOriented(source,orientation,edge),quality);
+  for(let guard=0;guard<20&&blob.size>=maxBytes;guard++){
+    if(quality>0.4) quality=Math.round((quality-0.1)*10)/10;
+    else{
+      const next=Math.round(edge*0.75);
+      if(next<240) break;
+      edge=next;
+      quality=0.65;
+    }
+    blob=await canvasBlob(drawOriented(source,orientation,edge),quality);
+  }
+  if(source.close) source.close();
+  return blob;
+}
+function setCapMsg(t){const n=$('#capmsg');if(n)n.textContent=t||'';}
 $('#cam').onchange=async ev=>{
   const f=ev.target.files&&ev.target.files[0];
   ev.target.value='';
   if(!f) return;
+  if(rec){setCapMsg('請先按停止，再拍下一張。');return;}
+  await takePhoto(f);
+};
+async function takePhoto(file){
+  setCapMsg('處理照片…');
+  let photo=file;
+  try{photo=await compressPhoto(file);}
+  catch(e){setCapMsg('照片無法壓縮，已用原檔。');}
   const ts=Date.now();
   const folder=await activeFolder();
-  await putNote({id:ts,ts,photo:f,loc:{pending:true},transcript:'',folderId:folder.id});
+  await putNote({id:ts,ts,photo,loc:{pending:true},transcript:'',folderId:folder.id});
+  voiceNoteId=null;
+  const locPromise=geo().then(loc=>updateNote(ts,cur=>{cur.loc=loc;}));
   await render();
-  const loc=await geo();
-  await updateNote(ts,cur=>{cur.loc=loc;});
-  await render();
-};
+  const card=document.querySelector(`[data-id="${CSS.escape(String(ts))}"]`);
+  if(card) card.scrollIntoView({block:'nearest'});
+  void locPromise.then(()=>{if(!rec) render();});
+  void afterPhoto(ts);
+}
+async function afterPhoto(ts){
+  const ok=await startVoice(ts);
+  if(recNoteId===ts){voiceNoteId=null;setCapMsg('');}
+  else if(!ok){voiceNoteId=ts;setCapMsg('無法自動開始錄音。請按「開始錄音」。');}
+  paintDock();
+}
 
 const mapl=l=>l&&l.lat!=null?`https://www.google.com/maps?q=${l.lat.toFixed(6)},${l.lng.toFixed(6)}`:'';
 function notePhotos(e){
@@ -329,27 +481,89 @@ async function renameFolder(id,name){
 }
 async function useFolder(id){localStorage.activeFolder=id;await render();}
 
-let recStream=null;
-async function record(e,button){
-  if(rec){rec.stop();return;}
-  if(recNoteId===e.id){recNoteId=null;await render();return;}
-  if(transcribing.has(e.id)){alert('正在轉成文字，請稍候');return;}
-  recNoteId=e.id;
-  if(button) button.textContent='⏹ 停止錄音';
-  let st;
-  try{st=await navigator.mediaDevices.getUserMedia({audio:true});}
-  catch(x){recNoteId=null;alert('無法使用麥克風：'+x.message);await render();return;}
-  if(recNoteId!==e.id){st.getTracks().forEach(t=>t.stop());return;}
-  recStream=st;
+let micStream=null;
+let micWarm=null;
+let voiceNoteId=null;
+let sharedAudio=null;
+function releaseMic(){
+  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
+  micWarm=null;
+}
+function liveMic(){
+  if(micStream&&micStream.getAudioTracks().some(t=>t.readyState==='live')) return micStream;
+  micStream=null;
+  return null;
+}
+function armMic(){
+  const live=liveMic();
+  if(live) return Promise.resolve(live);
+  if(micWarm) return micWarm;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return Promise.reject(new Error('這台瀏覽器不能錄音'));
+  micWarm=navigator.mediaDevices.getUserMedia({audio:true}).then(st=>{
+    micStream=st;
+    micWarm=null;
+    st.getAudioTracks().forEach(t=>t.addEventListener('ended',()=>{if(micStream===st) micStream=null;}));
+    return st;
+  }).catch(err=>{micWarm=null;throw err;});
+  return micWarm;
+}
+function unlockAudio(){
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC) return;
+  try{
+    if(!sharedAudio) sharedAudio=new AC();
+    if(sharedAudio.state==='suspended') sharedAudio.resume();
+  }catch(e){}
+}
+function beginRecorder(noteId,st){
   const type=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
-  rec=new MediaRecorder(st,type?{mimeType:type}:{});const ch=[];
-  rec.ondataavailable=d=>{if(d.data&&d.data.size)ch.push(d.data);};
-  const noteId=e.id;
-  rec.onstop=async()=>{st.getTracks().forEach(t=>t.stop());rec=null;recNoteId=null;recStream=null;const blob=new Blob(ch,{type:ch[0]?.type||type||'audio/mp4'});await attachRecording(noteId,blob);};
-  rec.start(1000);
+  const mr=new MediaRecorder(st,type?{mimeType:type}:{});
+  const ch=[];
+  mr.ondataavailable=d=>{if(d.data&&d.data.size)ch.push(d.data);};
+  mr.onstop=async()=>{
+    if(rec===mr) rec=null;
+    recNoteId=null;
+    voiceNoteId=null;
+    paintDock();
+    const blob=new Blob(ch,{type:(ch[0]&&ch[0].type)||type||'audio/mp4'});
+    await attachRecording(noteId,blob);
+  };
+  rec=mr;
+  recNoteId=noteId;
+  mr.start(250);
+  paintDock();
+}
+async function startVoice(noteId){
+  if(rec) return recNoteId===noteId;
+  if(transcribing.has(noteId)){setCapMsg('正在轉成文字，請稍候');return false;}
+  let st=liveMic();
+  if(!st){
+    try{st=await armMic();}
+    catch(e){return false;}
+  }
+  try{beginRecorder(noteId,st);return true;}
+  catch(e){rec=null;recNoteId=null;return false;}
+}
+async function record(e){
+  if(rec&&recNoteId===e.id){unlockAudio();rec.stop();return;}
+  if(rec) return;
+  unlockAudio();
+  voiceNoteId=null;
+  const ok=await startVoice(e.id);
+  if(!ok){voiceNoteId=e.id;setCapMsg('無法自動開始錄音。請按「開始錄音」。');}
+  paintDock();
   await render();
 }
 
+function paintDock(){
+  const recording=!!rec;
+  const fallback=!recording&&!!voiceNoteId;
+  const halt=$('#halt'), speak=$('#speak'), shoot=$('#shoot'), ind=$('#recind');
+  if(halt) halt.hidden=!recording;
+  if(ind) ind.hidden=!recording;
+  if(speak) speak.hidden=!fallback;
+  if(shoot) shoot.hidden=recording||fallback;
+}
 function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;}
 function button(cls,text,onclick){const b=el('button',cls,text);b.type='button';b.onclick=onclick;return b;}
 function setUpStatus(t){const n=$('#upstat');if(n)n.textContent=t;}
@@ -808,10 +1022,11 @@ async function render(){
     box.append(row);
   }
   await paintTrackPanel();
+  paintDock();
   const notes=active?(await notesIn(active.id)).sort((a,b)=>b.ts-a.ts):[];
   const L=$('#list');
   L.replaceChildren();
-  if(!notes.length){L.append(el('p','empty','此資料夾還沒有筆記。'));return;}
+    if(!notes.length){L.append(el('p','empty','此資料夾還沒有筆記。'));paintDock();return;}
   for(const e of notes){
     const c=el('div','card');
     c.dataset.id=String(e.id);
@@ -830,14 +1045,13 @@ async function render(){
       au.append(el('small','', '錄音保留中（轉成文字成功後會刪除）'));
     }
     c.append(au);
-    const rb=button('r',e.audio?'🎙 重新錄音':'🎙 錄音',ev=>record(e,ev.target));
-    if(recNoteId===e.id) rb.textContent='⏹ 停止錄音';
-    c.append(rb);
+    if(e.audio) c.append(button('r','🎙 重新錄音',()=>record(e)));
+    if(recNoteId===e.id) c.append(el('div','rec-ind','錄音中'));
     const tb=button('t','📝 轉成文字',()=>doTranscribe(e.id));
     if(!e.audio) tb.hidden=true;
     c.append(tb);
     const ta=document.createElement('textarea');
-    ta.placeholder='逐字稿（可編輯）';
+    ta.placeholder='說明，當作這張照片的圖說（可編輯）';
     ta.value=e.transcript||'';
     ta.onchange=()=>updateNote(e.id,cur=>{cur.transcript=ta.value;});
     c.append(ta);
@@ -858,9 +1072,10 @@ async function render(){
     c.append(button('sec d','刪除',async()=>{if(confirm('確定刪除這筆紀錄？')){await delNote(e.id);await render();}}));
     L.append(c);
   }
+  paintDock();
 }
 
-window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,flushFixes:()=>pointChain};
+window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,compressPhoto,readExifOrientation,releaseMic,flushFixes:()=>pointChain};
 
 async function saveClient(){
   const v=$('#clientId').value.trim();
@@ -882,7 +1097,22 @@ async function saveClient(){
   $('#saveClient').onclick=saveClient;
   if($('#startTrack')) $('#startTrack').onclick=()=>startTrack().catch(err=>setTrackMsg(err.message));
   if($('#stopTrack')) $('#stopTrack').onclick=()=>finishTrack().catch(err=>setTrackMsg(err.message));
+  if($('#shoot')) $('#shoot').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
+  if($('#speak')){
+    $('#speak').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
+    $('#speak').onclick=async()=>{
+      if(!voiceNoteId) return;
+      unlockAudio();
+      const id=voiceNoteId;
+      const ok=await startVoice(id);
+      if(ok){voiceNoteId=null;setCapMsg('');}
+      else setCapMsg('仍無法錄音。請允許麥克風後再按一次。');
+      paintDock();
+    };
+  }
+  if($('#halt')) $('#halt').onclick=()=>{unlockAudio();if(rec&&rec.state==='recording'){try{rec.requestData();}catch(e){} rec.stop();}};
   document.addEventListener('visibilitychange',onVisible);
+  window.addEventListener('pagehide',releaseMic);
   setInterval(()=>{if(activeTrackId) paintLive();},1000);
   window.addEventListener('online',()=>{flushOutbox();});
   await render();

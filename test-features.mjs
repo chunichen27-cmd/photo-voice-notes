@@ -67,7 +67,7 @@ const paths = await p.evaluate(async () => {
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v7') fail('cache ' + paths.shells.join());
+if (paths.shells.join() !== 'shell-v8') fail('cache ' + paths.shells.join());
 for (const name of ['config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
@@ -104,6 +104,22 @@ await p.click('#createFolder');
 await p.waitForFunction(() => document.querySelector('#activeName').textContent === '2026-10-26 新店山路');
 const folderId = await p.evaluate(async () => (await pvn.activeFolder()).id);
 
+await p.evaluate(() => {
+  window.__micCalls = 0;
+  window.__micMode = 'reject';
+  const ask = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = async () => {
+    window.__micCalls++;
+    if (window.__micMode === 'reject') { const err = new Error('denied'); err.name = 'NotAllowedError'; throw err; }
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const dest = ctx.createMediaStreamDestination();
+    osc.connect(dest);
+    osc.start();
+    return dest.stream;
+  };
+  window.__origGetUserMedia = ask;
+});
 await p.setInputFiles('#cam', 'docs/icon-192.png');
 await p.setInputFiles('#cam', 'docs/icon-512.png');
 await p.waitForFunction(() => {
@@ -332,6 +348,18 @@ await p.addInitScript(() => {
   window.__wake = 0;
   window.__watched = 0;
   window.__geoOpts = null;
+  window.__micCalls = 0;
+  if (!window.__micMode) window.__micMode = 'reject';
+  navigator.mediaDevices.getUserMedia = async () => {
+    window.__micCalls++;
+    if (window.__micMode === 'reject') { const err = new Error('denied'); err.name = 'NotAllowedError'; throw err; }
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const dest = ctx.createMediaStreamDestination();
+    osc.connect(dest);
+    osc.start();
+    return dest.stream;
+  };
   const watch = function (ok, err, opts) {
     window.__geoOk = ok;
     window.__geoErr = err;
@@ -358,6 +386,7 @@ await p.addInitScript(() => {
 });
 await p.reload();
 await p.waitForFunction(() => window.pvn && document.querySelector('#startTrack') && !document.querySelector('#startTrack').hidden);
+await p.evaluate(() => window.scrollTo(0, 0));
 const wakesBefore = await p.evaluate(() => window.__wake);
 await p.click('#startTrack');
 await p.waitForFunction(() => window.__geoOk && window.__geoOpts && window.__geoOpts.enableHighAccuracy === true);
@@ -442,6 +471,96 @@ await p.click('#stopTrack');
 await p.waitForFunction(() => document.querySelectorAll('#tracklist .track-row').length === 2);
 console.log('two tracks');
 if (watched < 1) fail('watch was not started');
+
+const compressed = await p.evaluate(async () => {
+  const paint = (w, h) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    const img = g.createImageData(w, h);
+    for (let i = 0; i < img.data.length; i += 4) {
+      img.data[i] = (i * 13) & 255;
+      img.data[i + 1] = (i * 29) & 255;
+      img.data[i + 2] = (i * 7) & 255;
+      img.data[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    g.fillStyle = '#00f';
+    g.fillRect(0, 0, Math.max(4, Math.round(w * 0.12)), h);
+    return new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.92));
+  };
+  const big = await paint(3000, 1600);
+  const shrunk = await pvn.compressPhoto(big);
+  const bmp = await createImageBitmap(shrunk);
+  const tight = await pvn.compressPhoto(big, {maxBytes: 20000, maxEdge: 800});
+  const raw = await paint(80, 30);
+  const bytes = new Uint8Array(await raw.arrayBuffer());
+  const tiff = new Uint8Array([
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x01, 0x00,
+    0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  ]);
+  const size = 2 + 6 + tiff.length;
+  const app = new Uint8Array(2 + size);
+  app[0] = 0xff; app[1] = 0xe1; app[2] = size >> 8; app[3] = size & 255;
+  app.set([0x45, 0x78, 0x69, 0x66, 0, 0], 4);
+  app.set(tiff, 10);
+  const out = new Uint8Array(bytes.length + app.length);
+  out[0] = 0xff; out[1] = 0xd8;
+  out.set(app, 2);
+  out.set(bytes.subarray(2), 2 + app.length);
+  const turned = new Blob([out], {type: 'image/jpeg'});
+  const orient = await pvn.readExifOrientation(turned);
+  const fixed = await pvn.compressPhoto(turned);
+  const upright = await createImageBitmap(fixed);
+  const px = document.createElement('canvas');
+  px.width = upright.width; px.height = upright.height;
+  const ctx = px.getContext('2d');
+  ctx.drawImage(upright, 0, 0);
+  const top = ctx.getImageData(Math.floor(upright.width / 2), 2, 1, 1).data;
+  return {
+    type: shrunk.type, bytes: shrunk.size, w: bmp.width, h: bmp.height,
+    tight: tight.size, orient, fw: upright.width, fh: upright.height, top: [top[0], top[1], top[2]]
+  };
+});
+console.log('photo compress', JSON.stringify(compressed));
+if (compressed.type !== 'image/jpeg' || compressed.bytes >= 5 * 1024 * 1024) fail('jpeg size ' + compressed.bytes);
+if (Math.max(compressed.w, compressed.h) > 2560 || Math.max(compressed.w, compressed.h) < 2500) fail('long edge ' + compressed.w + 'x' + compressed.h);
+if (compressed.tight >= 20000) fail('quality not reduced ' + compressed.tight);
+if (compressed.orient !== 6 || compressed.fw >= compressed.fh) fail('orientation ' + JSON.stringify(compressed));
+if (compressed.top[2] <= compressed.top[0]) fail('blue strip not rotated to the top ' + compressed.top.join(','));
+
+await p.evaluate(() => { window.__micMode = 'ok'; window.__micCalls = 0; window.__transcribeStub = async () => ({type: 'result', text: '這是圖說'}); localStorage.modelReady = '1'; });
+await p.click('#startTrack');
+await p.waitForFunction(() => document.querySelector('#trackstat').textContent.includes('錄製中'));
+await p.locator('#shoot').dispatchEvent('pointerdown');
+await p.waitForFunction(() => window.__micCalls === 1);
+await p.setInputFiles('#cam', 'docs/icon-192.png');
+await p.waitForFunction(() => !document.querySelector('#halt').hidden && !document.querySelector('#recind').hidden && document.querySelector('#recind').innerText.includes('錄音中') && document.querySelector('#shoot').hidden);
+if (await p.evaluate(() => window.__micCalls) !== 1) fail('photo change asked for the mic again');
+await p.click('#halt');
+await p.waitForFunction(() => {
+  const card = document.querySelector('#list .card');
+  const ta = card && card.querySelector('textarea');
+  return ta && ta.value.includes('這是圖說') && !card.querySelector('audio') && document.querySelector('#halt').hidden && !document.querySelector('#shoot').hidden;
+});
+const still = await p.evaluate(async () => (await pvn.allTracks()).some(t => t.recording && !t.stopped));
+if (!still) fail('voice stop ended the GPS track');
+const calls = await p.evaluate(() => window.__micCalls);
+await p.locator('#shoot').dispatchEvent('pointerdown');
+if (await p.evaluate(() => window.__micCalls) !== calls) fail('warm mic was dropped');
+await p.evaluate(() => { pvn.releaseMic(); window.__micMode = 'reject'; });
+await p.locator('#shoot').dispatchEvent('pointerdown');
+await p.setInputFiles('#cam', 'docs/icon-512.png');
+await p.waitForFunction(() => !document.querySelector('#speak').hidden && document.querySelector('#capmsg').textContent.includes('開始錄音'));
+await p.evaluate(() => { window.__micMode = 'ok'; });
+await p.locator('#speak').dispatchEvent('pointerdown');
+await p.click('#speak');
+await p.waitForFunction(() => !document.querySelector('#halt').hidden);
+await p.click('#halt');
+await p.waitForFunction(() => document.querySelector('#halt').hidden);
+console.log('field flow ok');
 
 if (errors.length) fail('page errors: ' + errors.join(' | '));
 await b.close();
