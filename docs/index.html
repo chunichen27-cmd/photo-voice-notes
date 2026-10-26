@@ -10,6 +10,8 @@ button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;pad
 img{max-width:100%;border-radius:8px}textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
 textarea{min-height:80px}small,.hint{color:#666}
 .active-name{font-size:22px;font-weight:700;margin:4px 0}
+.track-live{font-weight:700;color:#9d1e19;min-height:1.4em}
+.track-row{padding:6px 0;border-top:1px solid #eee}
 .folder-row{border-top:1px solid #eee;padding:8px 0}
 .fname{font-weight:600;margin-bottom:4px}
 label.field{display:block;margin-top:8px;color:#333}
@@ -19,7 +21,16 @@ label.field{display:block;margin-top:8px;color:#333}
 <div class="card">
   <div>目前資料夾</div>
   <div id="activeName" class="active-name">未分類</div>
-  <div class="hint">新的照片、錄音、逐字稿和定位都會放進這個資料夾。</div>
+  <div class="hint">新的照片、錄音、逐字稿、定位和軌跡都會放進這個資料夾。</div>
+  <div id="trackbox">
+    <div id="trackstat" class="track-live"></div>
+    <button type="button" id="startTrack">開始記錄軌跡</button>
+    <button type="button" id="stopTrack" hidden>停止記錄軌跡</button>
+    <div id="trackresume" hidden></div>
+    <p class="hint" id="tracknote">iPhone 在鎖定螢幕或切到背景時會暫停定位。記錄時請保持這個畫面開著，不要鎖定螢幕。</p>
+    <div id="tracklist"></div>
+    <div id="trackmsg" class="hint"></div>
+  </div>
   <label class="field">新資料夾名稱<input id="folderName" autocomplete="off"></label>
   <button type="button" id="createFolder">建立並使用</button>
   <div id="folders"></div>

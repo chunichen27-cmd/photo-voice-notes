@@ -67,7 +67,7 @@ const paths = await p.evaluate(async () => {
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v6') fail('cache ' + paths.shells.join());
+if (paths.shells.join() !== 'shell-v7') fail('cache ' + paths.shells.join());
 for (const name of ['config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
@@ -310,6 +310,138 @@ if (left !== 0 || uploads.length !== 4) fail('queued upload did not flush, left 
 const queuedBody = uploads[3];
 if (!queuedBody.includes(Buffer.from('新店溪散步')) || !queuedBody.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) fail('flushed body is not the queued zip');
 console.log('offline flush ok');
+
+const shapedTrack = await p.evaluate(() => {
+  const started = Date.parse('2026-10-26T04:37:05Z');
+  const name = pvn.trackGpxName({started});
+  const gpx = pvn.gpxText({started, name}, [{lat: 25.0478, lon: 121.517, ele: 12.5, time: started, acc: 5}]);
+  return {
+    name,
+    gpx,
+    keep: pvn.acceptFix(null, {lat: 25, lon: 121, acc: 50}),
+    bad: pvn.acceptFix(null, {lat: 25, lon: 121, acc: 51}),
+    dup: pvn.acceptFix({lat: 25, lon: 121}, {lat: 25.000001, lon: 121, acc: 5})
+  };
+});
+if (shapedTrack.name !== '20261026_123705_軌跡.gpx') fail('track name ' + shapedTrack.name);
+if (!shapedTrack.gpx.includes('version="1.1"') || !shapedTrack.gpx.includes('<trkpt lat="25.047800" lon="121.517000">') || !shapedTrack.gpx.includes('<ele>12.5</ele>') || !shapedTrack.gpx.includes('<time>2026-10-26T04:37:05.000Z</time>')) fail('gpx shape ' + shapedTrack.gpx);
+if (!shapedTrack.keep || shapedTrack.bad || shapedTrack.dup) fail('acceptFix ' + JSON.stringify(shapedTrack));
+if (!(await p.locator('#tracknote').innerText()).includes('不要鎖定螢幕')) fail('iphone note missing');
+
+await p.addInitScript(() => {
+  window.__wake = 0;
+  window.__watched = 0;
+  window.__geoOpts = null;
+  const watch = function (ok, err, opts) {
+    window.__geoOk = ok;
+    window.__geoErr = err;
+    window.__geoOpts = opts;
+    window.__watched += 1;
+    return 7;
+  };
+  const clear = function () { window.__cleared = (window.__cleared || 0) + 1; };
+  const geo = navigator.geolocation;
+  try { geo.watchPosition = watch; geo.clearWatch = clear; }
+  catch (e) {
+    Object.defineProperty(geo, 'watchPosition', {configurable: true, value: watch});
+    Object.defineProperty(geo, 'clearWatch', {configurable: true, value: clear});
+  }
+  const request = async () => {
+    window.__wake += 1;
+    return {release: async () => { window.__wakeReleased = (window.__wakeReleased || 0) + 1; }, addEventListener() {}};
+  };
+  try {
+    Object.defineProperty(navigator, 'wakeLock', {configurable: true, value: {request}});
+  } catch (e) {
+    if (navigator.wakeLock) navigator.wakeLock.request = request;
+  }
+});
+await p.reload();
+await p.waitForFunction(() => window.pvn && document.querySelector('#startTrack') && !document.querySelector('#startTrack').hidden);
+const wakesBefore = await p.evaluate(() => window.__wake);
+await p.click('#startTrack');
+await p.waitForFunction(() => window.__geoOk && window.__geoOpts && window.__geoOpts.enableHighAccuracy === true);
+if (await p.evaluate(() => window.__wake) <= wakesBefore) fail('wake lock was not requested');
+const t0 = Date.parse('2026-10-26T04:37:05Z');
+await p.evaluate(async (t0) => {
+  const send = async (lat, lon, acc, ele, time) => {
+    window.__geoOk({timestamp: time, coords: {latitude: lat, longitude: lon, accuracy: acc, altitude: ele}});
+    await pvn.flushFixes();
+  };
+  await send(25.0478, 121.517, 5, 20, t0);
+  await send(25.05, 121.517, 80, 1, t0 + 1000);
+  await send(25.047801, 121.517, 5, 20, t0 + 2000);
+  await send(25.0488, 121.517, 8, 22, t0 + 10000);
+}, t0);
+await p.waitForFunction(() => {
+  const t = document.querySelector('#trackstat').textContent;
+  return t.includes('錄製中') && t.includes('2 點') && t.includes('公尺');
+});
+const live = await p.evaluate(async () => {
+  const tracks = await pvn.allTracks();
+  const open = tracks.find(t => t.recording);
+  const pts = await pvn.pointsIn(open.id);
+  return {folderId: open.folderId, active: (await pvn.activeFolder()).id, n: pts.length, acc: pts.map(p => p.acc), ele: pts.map(p => p.ele)};
+});
+console.log('live track', JSON.stringify(live));
+if (live.n !== 2 || live.folderId !== live.active || live.acc.some(a => a > 50)) fail('points were not filtered');
+const watched = await p.evaluate(() => window.__watched);
+await p.reload();
+await p.waitForFunction(() => document.querySelector('#trackresume') && !document.querySelector('#trackresume').hidden && document.querySelector('#trackresume').innerText.includes('繼續記錄'));
+if (await p.evaluate(() => window.__watched) !== 0) fail('reload resumed without asking');
+await p.click('#trackresume button.resume');
+await p.waitForFunction(() => window.__watched === 1 && document.querySelector('#trackstat').textContent.includes('錄製中'));
+await p.evaluate(async (t0) => {
+  window.__geoOk({timestamp: t0 + 20000, coords: {latitude: 25.0498, longitude: 121.517, accuracy: 6, altitude: 30}});
+  await pvn.flushFixes();
+}, t0);
+await p.evaluate(() => pvn.onVisible());
+await p.waitForFunction(() => window.__wake >= 2 && window.__watched >= 2);
+await p.click('#stopTrack');
+await p.waitForFunction(() => document.querySelector('#startTrack') && !document.querySelector('#startTrack').hidden && document.querySelector('#tracklist').innerText.includes('匯出 GPX'));
+const saved = await p.evaluate(async () => {
+  const tracks = (await pvn.allTracks()).filter(t => !t.recording);
+  const pts = await pvn.pointsIn(tracks[0].id);
+  return {n: tracks.length, points: pts.length, name: tracks[0].name, stopped: !!tracks[0].stopped};
+});
+if (saved.n !== 1 || saved.points !== 3 || !/^\d{8}_\d{6}_軌跡\.gpx$/.test(saved.name) || !saved.stopped) fail('saved track ' + JSON.stringify(saved));
+await p.evaluate(() => {
+  try { Object.defineProperty(Navigator.prototype, 'canShare', {configurable: true, value: () => false}); } catch (e) {}
+});
+const [gpxDownload] = await Promise.all([
+  p.waitForEvent('download'),
+  p.click('#tracklist button.gpxout')
+]);
+const gpxBody = await readFile(await gpxDownload.path(), 'utf8');
+if (gpxDownload.suggestedFilename() !== saved.name) fail('download ' + gpxDownload.suggestedFilename());
+if (!gpxBody.includes('<trkseg>') || (gpxBody.match(/<trkpt /g) || []).length !== 3 || !gpxBody.includes('<time>') || !gpxBody.includes('Z</time>')) fail('downloaded gpx ' + gpxBody.slice(0, 240));
+const zipped = await p.evaluate(async () => {
+  const folder = await pvn.activeFolder();
+  const z = await JSZip.loadAsync(await pvn.buildFolderZip(folder, await pvn.notesIn(folder.id)));
+  const tracks = (await pvn.allTracks()).filter(t => t.folderId === folder.id);
+  const names = tracks.map(t => t.name);
+  const text = await z.file(names[0]).async('string');
+  return {names: Object.keys(z.files), text, wanted: names[0]};
+});
+if (!zipped.names.includes(zipped.wanted) || !zipped.text.includes('<trkpt ') || !zipped.names.includes('打鐵寮.gpx')) fail('zip tracks ' + zipped.names.join(','));
+console.log('track zip', zipped.wanted);
+
+await p.click('#startTrack');
+await p.waitForFunction(() => window.__watched >= 3);
+await p.evaluate(() => window.__geoErr({code: 1, message: 'denied'}));
+await p.waitForFunction(() => document.querySelector('#trackmsg').textContent.includes('定位被拒絕'));
+const denied = await p.evaluate(async () => (await pvn.allTracks()).filter(t => t.recording && !t.stopped).length);
+if (denied !== 0) fail('denied track still recording');
+await p.click('#startTrack');
+await p.waitForFunction(() => window.__geoOk);
+await p.evaluate(async (t0) => {
+  window.__geoOk({timestamp: t0 + 60000, coords: {latitude: 25.06, longitude: 121.52, accuracy: 4, altitude: null}});
+  await pvn.flushFixes();
+}, t0);
+await p.click('#stopTrack');
+await p.waitForFunction(() => document.querySelectorAll('#tracklist .track-row').length === 2);
+console.log('two tracks');
+if (watched < 1) fail('watch was not started');
 
 if (errors.length) fail('page errors: ' + errors.join(' | '));
 await b.close();

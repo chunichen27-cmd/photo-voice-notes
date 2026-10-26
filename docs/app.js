@@ -7,7 +7,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 if(navigator.storage&&navigator.storage.persist) navigator.storage.persist();
 
 const dbp=new Promise((ok,no)=>{
-  const r=indexedDB.open('notes',3);
+  const r=indexedDB.open('notes',4);
   r.onupgradeneeded=()=>{
     const db=r.result;
     if(!db.objectStoreNames.contains('e')) db.createObjectStore('e',{keyPath:'id'});
@@ -15,6 +15,11 @@ const dbp=new Promise((ok,no)=>{
     if(!db.objectStoreNames.contains('outbox')) db.createObjectStore('outbox',{keyPath:'id'});
     if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'key'});
     if(!db.objectStoreNames.contains('gpx')) db.createObjectStore('gpx',{keyPath:'id'});
+    if(!db.objectStoreNames.contains('tracks')) db.createObjectStore('tracks',{keyPath:'id'});
+    if(!db.objectStoreNames.contains('trkpt')){
+      const pts=db.createObjectStore('trkpt',{keyPath:'id'});
+      pts.createIndex('trackId','trackId');
+    }
   };
   r.onsuccess=()=>ok(r.result);
   r.onerror=()=>no(r.error);
@@ -42,6 +47,20 @@ const delMeta=key=>idb('meta','readwrite',s=>s.delete(key));
 const putGpx=e=>idb('gpx','readwrite',s=>s.put(e));
 const allGpx=()=>idb('gpx','readonly',s=>s.getAll());
 const gpxIn=async folderId=>(await allGpx()).filter(g=>g.folderId===folderId);
+const putTrack=t=>idb('tracks','readwrite',s=>s.put(t));
+const getTrack=id=>idb('tracks','readonly',s=>s.get(id));
+const allTracks=()=>idb('tracks','readonly',s=>s.getAll());
+const delTrack=id=>idb('tracks','readwrite',s=>s.delete(id));
+const putPoint=p=>idb('trkpt','readwrite',s=>s.put(p));
+const tracksIn=async folderId=>(await allTracks()).filter(t=>t.folderId===folderId);
+function pointsIn(trackId){
+  return dbp.then(db=>new Promise((ok,no)=>{
+    const t=db.transaction('trkpt','readonly');
+    const req=t.objectStore('trkpt').index('trackId').getAll(trackId);
+    t.oncomplete=()=>ok(req.result||[]);
+    t.onerror=()=>no(t.error);
+  }));
+}
 function updateNote(id,fn){
   return dbp.then(db=>new Promise((ok,no)=>{
     const t=db.transaction('e','readwrite');
@@ -235,11 +254,19 @@ async function buildFolderZip(folder,notes){
       z.file(n,item.note.audio);
     }
   }
-  const tracks=(await gpxIn(folder.id)).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-Hant'));
-  for(const g of tracks){
+  const files=(await gpxIn(folder.id)).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-Hant'));
+  for(const g of files){
     const n=uniqueZipName(safeFileName(g.name), used);
     used.add(n);
     z.file(n,g.file);
+  }
+  const recorded=(await tracksIn(folder.id)).slice().sort((a,b)=>a.started-b.started);
+  for(const t of recorded){
+    const pts=await pointsIn(t.id);
+    if(!pts.length) continue;
+    const n=uniqueZipName(t.name||trackGpxName(t), used);
+    used.add(n);
+    z.file(n,gpxText(t,pts));
   }
   return z.generateAsync({type:'blob'});
 }
@@ -505,6 +532,243 @@ async function flushOutbox(){
   }
 }
 
+const ACC_MAX=50;
+const DUP_M=2;
+let watchId=null;
+let activeTrackId=null;
+let openTrackId=null;
+let lastPoint=null;
+let liveCount=0;
+let liveDistance=0;
+let liveStarted=0;
+let pointChain=Promise.resolve();
+let ready=Promise.resolve();
+let wakeLock=null;
+function haversine(a,b){
+  const R=6371000;
+  const p1=a.lat*Math.PI/180, p2=b.lat*Math.PI/180;
+  const dp=(b.lat-a.lat)*Math.PI/180, dl=(b.lon-a.lon)*Math.PI/180;
+  const s=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(s)));
+}
+function pathDistance(pts){
+  let d=0;
+  for(let i=1;i<pts.length;i++) d+=haversine(pts[i-1],pts[i]);
+  return d;
+}
+function acceptFix(prev, fix){
+  if(!fix||!Number.isFinite(fix.lat)||!Number.isFinite(fix.lon)) return false;
+  if(Math.abs(fix.lat)>90||Math.abs(fix.lon)>180) return false;
+  if(fix.acc!=null&&Number.isFinite(fix.acc)&&fix.acc>ACC_MAX) return false;
+  if(prev&&haversine(prev,fix)<DUP_M) return false;
+  return true;
+}
+function fmtDur(ms){
+  const s=Math.max(0,Math.round(ms/1000));
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
+  if(h) return h+' 小時 '+m+' 分';
+  if(m) return m+' 分 '+String(ss).padStart(2,'0')+' 秒';
+  return ss+' 秒';
+}
+function fmtDist(m){
+  if(!Number.isFinite(m)||m<1000) return Math.round(m||0)+' 公尺';
+  return (m/1000).toFixed(2)+' 公里';
+}
+function trackGpxName(track){return `${fname(track.started)}_軌跡.gpx`;}
+function xmlEsc(s){return String(s).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&apos;','"':'&quot;'}[ch]));}
+function gpxText(track, points){
+  const body=(points||[]).slice().sort((a,b)=>a.time-b.time).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon)).map(p=>{
+    const ele=Number.isFinite(p.ele)?'<ele>'+p.ele+'</ele>':'';
+    return `<trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}">${ele}<time>${new Date(p.time).toISOString()}</time></trkpt>`;
+  }).join('');
+  const title=xmlEsc((track&&(track.name||trackGpxName(track)))||'軌跡').replace(/\.gpx$/,'');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="離線筆記" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${title}</name><trkseg>${body}</trkseg></trk>\n</gpx>\n`;
+}
+function setTrackMsg(t){const n=$('#trackmsg');if(n) n.textContent=t||'';}
+function paintLive(){
+  const n=$('#trackstat');
+  if(!n) return;
+  if(!activeTrackId){n.textContent='';return;}
+  const elapsed=fmtDur(Date.now()-liveStarted);
+  const dist=fmtDist(liveDistance);
+  n.textContent=`錄製中　已經 ${elapsed}　${liveCount} 點　${dist}`;
+  const row=document.querySelector(`[data-track="${CSS.escape(String(activeTrackId))}"] span`);
+  if(row) row.textContent=`${fmt(liveStarted)}　${elapsed}　${dist}　錄製中`;
+}
+function stopWatch(){
+  if(watchId!=null&&navigator.geolocation){
+    try{navigator.geolocation.clearWatch(watchId);}catch(e){}
+  }
+  watchId=null;
+}
+function startWatch(){
+  stopWatch();
+  if(!navigator.geolocation){setTrackMsg('這台裝置沒有提供定位。');return;}
+  watchId=navigator.geolocation.watchPosition(pos=>queueFix(pos), err=>{onGeoError(err);}, {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+}
+function queueFix(pos){pointChain=pointChain.then(()=>ready).then(()=>handleFix(pos)).catch(()=>{});}
+async function handleFix(pos){
+  if(!activeTrackId||!pos||!pos.coords) return;
+  const c=pos.coords;
+  const fix={
+    lat:c.latitude,
+    lon:c.longitude,
+    ele:Number.isFinite(c.altitude)?c.altitude:null,
+    time:Number.isFinite(pos.timestamp)?pos.timestamp:Date.now(),
+    acc:Number.isFinite(c.accuracy)?c.accuracy:null
+  };
+  if(!acceptFix(lastPoint, fix)) return;
+  const pt={id:'p'+fix.time.toString(36)+Math.random().toString(16).slice(2), trackId:activeTrackId, lat:fix.lat, lon:fix.lon, ele:fix.ele, time:fix.time, acc:fix.acc};
+  await putPoint(pt);
+  if(!activeTrackId||pt.trackId!==activeTrackId) return;
+  if(lastPoint) liveDistance+=haversine(lastPoint, fix);
+  lastPoint=fix;
+  liveCount++;
+  paintLive();
+}
+async function acquireWakeLock(){
+  if(!navigator.wakeLock||!activeTrackId) return;
+  try{wakeLock=await navigator.wakeLock.request('screen');}
+  catch(e){wakeLock=null;}
+}
+async function releaseWake(){
+  if(!wakeLock) return;
+  try{await wakeLock.release();}catch(e){}
+  wakeLock=null;
+}
+function onVisible(){
+  if(document.visibilityState!=='visible'||!activeTrackId) return;
+  void acquireWakeLock();
+  startWatch();
+}
+function beginLive(track, pts){
+  const sorted=(pts||[]).slice().sort((a,b)=>a.time-b.time);
+  activeTrackId=track.id;
+  liveStarted=track.started;
+  lastPoint=sorted[sorted.length-1]||null;
+  liveCount=sorted.length;
+  liveDistance=pathDistance(sorted);
+  ready=Promise.resolve();
+  setTrackMsg('');
+  startWatch();
+  void acquireWakeLock();
+  paintLive();
+}
+async function startTrack(){
+  if(activeTrackId) return;
+  if(openTrackId) return resumeTrack(openTrackId);
+  if(!navigator.geolocation){setTrackMsg('這台裝置沒有提供定位。');return;}
+  const track={id:'t'+Date.now(), folderId:localStorage.activeFolder||DEFAULT_FOLDER, started:Date.now(), stopped:null, recording:true};
+  track.name=trackGpxName(track);
+  beginLive(track, []);
+  await putTrack(track);
+  if(activeTrackId!==track.id){await delTrack(track.id);return;}
+  await render();
+}
+async function resumeTrack(id){
+  if(activeTrackId) return;
+  if(!navigator.geolocation){setTrackMsg('這台裝置沒有提供定位。');return;}
+  activeTrackId=id;
+  liveStarted=Date.now();
+  liveCount=0;
+  liveDistance=0;
+  lastPoint=null;
+  ready=Promise.all([getTrack(id), pointsIn(id)]).then(async ([track, pts])=>{
+    if(!track||activeTrackId!==id) return;
+    const sorted=pts.slice().sort((a,b)=>a.time-b.time);
+    liveStarted=track.started;
+    lastPoint=sorted[sorted.length-1]||null;
+    liveCount=sorted.length;
+    liveDistance=pathDistance(sorted);
+    track.recording=true;
+    track.stopped=null;
+    await putTrack(track);
+    paintLive();
+  });
+  setTrackMsg('');
+  startWatch();
+  void acquireWakeLock();
+  paintLive();
+  await ready;
+  await render();
+}
+async function finishTrack(id){
+  const trackId=id||activeTrackId;
+  if(!trackId) return;
+  if(activeTrackId===trackId){
+    stopWatch();
+    activeTrackId=null;
+    await releaseWake();
+  }
+  await pointChain;
+  const t=await getTrack(trackId);
+  if(t){
+    t.recording=false;
+    t.stopped=t.stopped||Date.now();
+    await putTrack(t);
+  }
+  lastPoint=null;
+  await render();
+}
+async function onGeoError(err){
+  if(!err||err.code!==1) return;
+  const id=activeTrackId;
+  stopWatch();
+  activeTrackId=null;
+  await releaseWake();
+  await pointChain;
+  const pts=id?await pointsIn(id):[];
+  if(id&&!pts.length) await delTrack(id);
+  else if(id){
+    const t=await getTrack(id);
+    if(t){t.recording=false;t.stopped=Date.now();await putTrack(t);}
+  }
+  setTrackMsg('定位被拒絕。請允許這個網站使用定位後，再按開始記錄軌跡。');
+  await render();
+}
+async function exportTrack(id){
+  const t=await getTrack(id);
+  if(!t) return;
+  const pts=await pointsIn(id);
+  const name=t.name||trackGpxName(t);
+  await share(new Blob([gpxText(t, pts)],{type:'application/gpx+xml'}), name);
+}
+async function paintTrackPanel(){
+  const active=await activeFolder();
+  const all=await allTracks();
+  const open=all.find(t=>t.recording&&!t.stopped&&t.id!==activeTrackId);
+  openTrackId=open?open.id:null;
+  const start=$('#startTrack'), stop=$('#stopTrack'), resume=$('#trackresume');
+  if(start) start.hidden=!!activeTrackId||!!open;
+  if(stop) stop.hidden=!activeTrackId;
+  if(resume){
+    resume.replaceChildren();
+    if(open){
+      resume.hidden=false;
+      const n=await pointsIn(open.id);
+      resume.append(el('div','', `有一段軌跡在重新載入前還沒停止（${n.length} 點）。要繼續記錄嗎？`));
+      resume.append(button('resume','繼續記錄',()=>resumeTrack(open.id).catch(err=>setTrackMsg(err.message))));
+      resume.append(button('sec endtrack','結束這段軌跡',()=>finishTrack(open.id).catch(err=>setTrackMsg(err.message))));
+    }else resume.hidden=true;
+  }
+  paintLive();
+  const list=$('#tracklist');
+  if(!list) return;
+  list.replaceChildren();
+  const mine=all.filter(t=>active&&t.folderId===active.id).sort((a,b)=>b.started-a.started);
+  if(!mine.length){list.append(el('p','hint','這個資料夾還沒有軌跡。'));return;}
+  for(const t of mine){
+    const pts=(await pointsIn(t.id)).sort((a,b)=>a.time-b.time);
+    const row=el('div','track-row');
+    row.dataset.track=t.id;
+    const end=t.stopped||(t.id===activeTrackId?Date.now():(pts.length?pts[pts.length-1].time:t.started));
+    const label=`${fmt(t.started)}　${fmtDur(end-t.started)}　${fmtDist(pathDistance(pts))}`+(t.recording&&!t.stopped?'　錄製中':'');
+    row.append(el('span','', label));
+    row.append(button('sec gpxout','匯出 GPX',()=>exportTrack(t.id).catch(err=>alert(err.message))));
+    list.append(row);
+  }
+}
+
 async function render(){
   const folders=(await allFolders()).sort((a,b)=>(a.created||0)-(b.created||0));
   const active=await activeFolder();
@@ -543,6 +807,7 @@ async function render(){
     row.append(button('drive','☁️ 送到記錄高高手',()=>onUpload(f.id)));
     box.append(row);
   }
+  await paintTrackPanel();
   const notes=active?(await notesIn(active.id)).sort((a,b)=>b.ts-a.ts):[];
   const L=$('#list');
   L.replaceChildren();
@@ -595,7 +860,7 @@ async function render(){
   }
 }
 
-window.pvn={allNotes,allFolders,allOutbox,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn};
+window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,flushFixes:()=>pointChain};
 
 async function saveClient(){
   const v=$('#clientId').value.trim();
@@ -615,6 +880,10 @@ async function saveClient(){
   if($('#clientId')) $('#clientId').value=preset;
   $('#createFolder').onclick=async()=>{try{await createFolder($('#folderName').value);}catch(err){alert(err.message);}};
   $('#saveClient').onclick=saveClient;
+  if($('#startTrack')) $('#startTrack').onclick=()=>startTrack().catch(err=>setTrackMsg(err.message));
+  if($('#stopTrack')) $('#stopTrack').onclick=()=>finishTrack().catch(err=>setTrackMsg(err.message));
+  document.addEventListener('visibilitychange',onVisible);
+  setInterval(()=>{if(activeTrackId) paintLive();},1000);
   window.addEventListener('online',()=>{flushOutbox();});
   await render();
   if(navigator.onLine) flushOutbox();
