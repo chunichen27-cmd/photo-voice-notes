@@ -3,12 +3,39 @@
 <meta name="theme-color" content="#1f6feb"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="離線筆記"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest"><title>離線筆記</title>
-<style>body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;max-width:640px;margin:auto}
+<style>
+body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;max-width:640px;margin:auto}
 button,label.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4px 2px;border-radius:8px;border:0;background:#1f6feb;color:#fff}
 button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0}
-img{max-width:100%;border-radius:8px}textarea{width:100%;min-height:80px;font-size:16px;box-sizing:border-box}small{color:#666}</style></head>
+img{max-width:100%;border-radius:8px}textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
+textarea{min-height:80px}small,.hint{color:#666}
+.active-name{font-size:22px;font-weight:700;margin:4px 0}
+.folder-row{border-top:1px solid #eee;padding:8px 0}
+.fname{font-weight:600;margin-bottom:4px}
+label.field{display:block;margin-top:8px;color:#333}
+</style></head>
 <body><h2>離線筆記</h2>
-<div id="model" class="card"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button id="dl">下載模型（約 80 MB，僅需一次）</button></div>
+<div id="model" class="card"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button type="button" id="dl">下載模型（約 80 MB，僅需一次）</button></div>
+<div class="card">
+  <div>目前資料夾</div>
+  <div id="activeName" class="active-name">未分類</div>
+  <div class="hint">新的照片、錄音、逐字稿和定位都會放進這個資料夾。</div>
+  <label class="field">新資料夾名稱<input id="folderName" autocomplete="off"></label>
+  <button type="button" id="createFolder">建立並使用</button>
+  <div id="folders"></div>
+  <small id="upstat"></small>
+</div>
+<div class="card">
+  <b>Google Drive</b>
+  <div class="hint">上傳需要網路。Client ID 存在這台手機，不會連同筆記送出。</div>
+  <label class="field">OAuth Client ID<input id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com"></label>
+  <button type="button" id="saveClient" class="sec">儲存 Client ID</button>
+</div>
 <label class="btn">📷 拍照新增<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
-<button id="expAll" class="sec">匯出全部 .txt</button><button id="zipAll" class="sec">匯出全部 .zip（含照片錄音）</button>
-<div id="list"></div><script src="vendor/cn2t.js"></script><script src="vendor/jszip.min.js"></script><script src="app.js"></script></body></html>
+<h3>此資料夾的筆記</h3>
+<div id="list"></div>
+<script src="config.js"></script>
+<script src="vendor/cn2t.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="app.js"></script>
+</body></html>
