@@ -1,4 +1,4 @@
-const V='shell-v4';
+const V='shell-v5';
 const SHELL=['./','index.html','app.js','config.js','worker.js','manifest.webmanifest','icon-192.png','icon-512.png','vendor/transformers.min.js','vendor/ort-wasm-simd-threaded.jsep.mjs','vendor/ort-wasm-simd-threaded.jsep.wasm','vendor/cn2t.js','vendor/jszip.min.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{

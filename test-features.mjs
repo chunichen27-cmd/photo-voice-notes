@@ -17,15 +17,20 @@ p.setDefaultTimeout(30000);
 
 const uploads = [];
 const apiPosts = [];
+const takenNames = new Set();
 await p.route('https://www.googleapis.com/**', async route => {
   const req = route.request();
   const url = req.url();
   const method = req.method();
   const auth = req.headers()['authorization'] || '';
   if (!auth.includes('test-token')) fail('missing bearer on ' + method + ' ' + url);
+  if (method !== 'GET' && method !== 'POST') fail('must not ' + method + ' ' + url);
   if (url.includes('/upload/drive/')) {
-    uploads.push(req.postDataBuffer());
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'file' + uploads.length, name: 'ok.zip'})});
+    const buf = req.postDataBuffer();
+    uploads.push(buf);
+    const sent = (buf.toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1];
+    if (sent) takenNames.add(sent);
+    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'file' + uploads.length, name: sent || 'ok.zip'})});
     return;
   }
   if (method === 'POST') {
@@ -34,11 +39,17 @@ await p.route('https://www.googleapis.com/**', async route => {
     return;
   }
   if (method === 'GET' && url.includes('/drive/v3/files?')) {
+    const q = decodeURIComponent(url.replace(/\+/g, ' '));
+    const wanted = (q.match(/name = '((?:\\'|[^'])*)'/) || [])[1];
+    if (q.includes('in parents') && wanted && takenNames.has(wanted.replace(/\\'/g, "'"))) {
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({files: [{id: 'oldzip', name: wanted}]})});
+      return;
+    }
     await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({files: []})});
     return;
   }
   if (method === 'GET' && url.includes('/drive/v3/files/inbox1')) {
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'inbox1', name: '記錄高高手收件匣', trashed: false})});
+    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'inbox1', name: '記錄高高手收件匣', trashed: false, mimeType: 'application/vnd.google-apps.folder'})});
     return;
   }
   await route.fulfill({status: 500, contentType: 'application/json', body: JSON.stringify({error: {message: 'unexpected ' + method + ' ' + url}})});
@@ -56,7 +67,7 @@ const paths = await p.evaluate(async () => {
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v4') fail('cache ' + paths.shells.join());
+if (paths.shells.join() !== 'shell-v5') fail('cache ' + paths.shells.join());
 if (!paths.urls.some(u => u.endsWith('/config.js'))) fail('config.js not precached');
 
 const today = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
@@ -116,9 +127,43 @@ for (const label of ['時間：', '（台北時間）', '位置：', '25.047800,
   if (!packed.txt.includes(label)) fail('txt missing ' + label);
 }
 if (packed.one.startsWith('資料夾：')) fail('single note txt should keep the old format');
+if (!/時間：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（台北時間）/.test(packed.txt)) fail('time format:\n' + packed.txt.slice(0, 200));
 const photos = packed.names.filter(n => n.endsWith('_照片.jpg'));
 if (photos.length !== 2 || photos.some(n => !/^\d{8}_\d{6}(_\d+)?_照片\.jpg$/.test(n))) fail('photo names ' + photos.join(','));
+const photoLines = [...packed.txt.matchAll(/照片：(\S+)/g)].map(m => m[1]);
+if (photoLines.length !== photos.length || photoLines.some(n => !packed.names.includes(n))) fail('photo lines ' + photoLines.join(','));
+for (const line of photoLines) {
+  const m = line.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (!m || !packed.txt.includes(`時間：${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}（台北時間）`)) fail('time does not match ' + line);
+}
 if (packed.names.some(n => n.includes('錄音'))) fail('zip had audio before recording');
+const shaped = await p.evaluate(() => {
+  const ts = Date.parse('2026-10-26T04:37:05Z');
+  const note = {id: 99, ts, photo: new Blob(['a'], {type: 'image/jpeg'}), transcript: '山路', loc: null};
+  const plan = pvn.planFiles([note]);
+  const text = window.txt(note, plan[0].photos.map(x => x.name));
+  const two = {id: 100, ts, photos: [new Blob(['b']), new Blob(['c'])], transcript: '', loc: null};
+  const plan2 = pvn.planFiles([two]);
+  const text2 = window.txt(two, plan2[0].photos.map(x => x.name));
+  return {
+    text,
+    names: plan[0].photos.map(x => x.name),
+    text2,
+    names2: plan2[0].photos.map(x => x.name),
+    base: pvn.zipBaseName({name: '打鐵寮古道'}, [{ts: Date.parse('2026-10-26T01:00:00Z')}]),
+    embedded: pvn.zipBaseName({name: '2026-10-26 新店山路'}, []),
+    dirty: pvn.zipBaseName({name: 'a/b:c*?'}, [{ts}]),
+    bare: window.txt({id: 1, ts, transcript: '', loc: null})
+  };
+});
+if (!shaped.text.includes('時間：2026-10-26 12:37:05（台北時間）')) fail(shaped.text);
+if (shaped.bare.includes('照片：')) fail('photo line without a photo');
+if (!shaped.text.includes('照片：20261026_123705_照片.jpg') || shaped.names[0] !== '20261026_123705_照片.jpg') fail(shaped.names.join(','));
+const lines2 = [...shaped.text2.matchAll(/照片：(\S+)/g)].map(m => m[1]);
+if (shaped.names2.length !== 2 || new Set(shaped.names2).size !== 2 || lines2.join() !== shaped.names2.join()) fail('multi photo ' + lines2.join(','));
+if (shaped.base !== '20261026_打鐵寮古道.zip') fail('base name ' + shaped.base);
+if (shaped.embedded !== '20261026_2026-10-26 新店山路.zip') fail('embedded date ' + shaped.embedded);
+if (shaped.dirty !== '20261026_a_b_c__.zip') fail('sanitize ' + shaped.dirty);
 
 await p.evaluate(() => {
   try { Object.defineProperty(Navigator.prototype, 'canShare', {configurable: true, value: () => false}); } catch (e) {}
@@ -131,6 +176,21 @@ const downloaded = await readFile(await download.path(), 'utf8');
 if (!download.suggestedFilename().includes('新店溪散步') || !download.suggestedFilename().endsWith('.txt')) fail('download name ' + download.suggestedFilename());
 if (downloaded !== packed.txt) fail('downloaded txt differs');
 console.log('txt download', download.suggestedFilename());
+
+await p.setInputFiles(`[data-folder="${folderId}"] input.gpx`, {
+  name: '打鐵寮.gpx',
+  mimeType: 'application/gpx+xml',
+  buffer: Buffer.from('<gpx>hi</gpx>')
+});
+await p.waitForFunction(id => document.querySelector(`[data-folder="${id}"]`)?.innerText.includes('打鐵寮.gpx'), folderId);
+const gpxPacked = await p.evaluate(async () => {
+  const folder = await pvn.activeFolder();
+  const z = await JSZip.loadAsync(await pvn.buildFolderZip(folder, await pvn.notesIn(folder.id)));
+  const file = z.file('打鐵寮.gpx');
+  return {has: !!file, text: file ? await file.async('string') : '', names: Object.keys(z.files)};
+});
+console.log('gpx', gpxPacked.names.join(', '));
+if (!gpxPacked.has || gpxPacked.text !== '<gpx>hi</gpx>') fail('gpx missing ' + gpxPacked.text);
 
 const ids = await p.evaluate(async () => (await pvn.notesIn((await pvn.activeFolder()).id)).sort((a, b) => a.ts - b.ts).map(n => n.id));
 const kept = await p.evaluate(async id => {
@@ -201,15 +261,23 @@ if (JSON.stringify(firstAuth.prompts) !== JSON.stringify(['none', ''])) fail('to
 if (firstAuth.scopes[0] !== 'https://www.googleapis.com/auth/drive.file') fail('scope ' + firstAuth.scopes[0]);
 if (firstAuth.ids[0] !== '123456-abc.apps.googleusercontent.com') fail('client id not passed');
 if (!apiPosts.some(body => body.includes('記錄高高手收件匣'))) fail('inbox was not created');
+const created = apiPosts.map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).find(j => j && j.name === '記錄高高手收件匣');
+if (!created || created.mimeType !== 'application/vnd.google-apps.folder' || Object.prototype.hasOwnProperty.call(created, 'parents')) fail('inbox create ' + apiPosts[0]);
+const inboxMeta = await p.evaluate(async () => pvn.getMeta('driveInbox'));
+if (!inboxMeta || inboxMeta.id !== 'inbox1') fail('inbox id not stored ' + JSON.stringify(inboxMeta));
 const body = uploads[0];
-if (!body || !body.includes(Buffer.from('新店溪散步')) || !body.includes(Buffer.from('inbox1'))) fail('upload metadata missing');
+const firstName = body ? (body.toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1] : '';
+if (!body || !/^\d{8}_新店溪散步\.zip$/.test(firstName) || !body.includes(Buffer.from('inbox1'))) fail('upload metadata ' + firstName);
 if (!body.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) fail('upload is not a zip');
 
 await p.evaluate(() => { document.querySelector('#upstat').textContent = ''; });
 await p.click(`[data-folder="${folderId}"] button.drive`);
 await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已送到「記錄高高手收件匣」'));
 const reused = await p.evaluate(() => window.__tokenPrompts.length);
+const secondName = (uploads[1].toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1] || '';
+console.log('second upload', secondName);
 if (reused !== 2 || uploads.length !== 2) fail('token was not reused, prompts ' + reused + ' uploads ' + uploads.length);
+if (!/^\d{8}_新店溪散步_\d{6}\.zip$/.test(secondName)) fail('collision name ' + secondName);
 
 await p.evaluate(() => { sessionStorage.removeItem('driveToken'); window.__allowSilent = true; document.querySelector('#upstat').textContent = ''; });
 await p.click(`[data-folder="${folderId}"] button.drive`);
@@ -223,7 +291,7 @@ await p.click(`[data-folder="${folderId}"] button.drive`);
 await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('目前沒有網路'));
 const queued = await p.evaluate(async () => (await pvn.allOutbox()).map(i => ({name: i.name, size: i.zip.size})));
 console.log('queued', JSON.stringify(queued));
-if (queued.length !== 1 || queued[0].size < 20 || !queued[0].name.startsWith('新店溪散步_') || !queued[0].name.endsWith('.zip')) fail('offline queue missing');
+if (queued.length !== 1 || queued[0].size < 20 || !/^\d{8}_新店溪散步\.zip$/.test(queued[0].name)) fail('offline queue ' + JSON.stringify(queued));
 if (await p.evaluate(() => window.__tokenPrompts.length) !== beforeOffline) fail('offline upload tried to auth');
 
 await ctx.setOffline(false);

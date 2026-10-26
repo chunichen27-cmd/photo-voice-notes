@@ -7,12 +7,14 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 if(navigator.storage&&navigator.storage.persist) navigator.storage.persist();
 
 const dbp=new Promise((ok,no)=>{
-  const r=indexedDB.open('notes',2);
+  const r=indexedDB.open('notes',3);
   r.onupgradeneeded=()=>{
     const db=r.result;
     if(!db.objectStoreNames.contains('e')) db.createObjectStore('e',{keyPath:'id'});
     if(!db.objectStoreNames.contains('folders')) db.createObjectStore('folders',{keyPath:'id'});
     if(!db.objectStoreNames.contains('outbox')) db.createObjectStore('outbox',{keyPath:'id'});
+    if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta',{keyPath:'key'});
+    if(!db.objectStoreNames.contains('gpx')) db.createObjectStore('gpx',{keyPath:'id'});
   };
   r.onsuccess=()=>ok(r.result);
   r.onerror=()=>no(r.error);
@@ -34,6 +36,12 @@ const allFolders=()=>idb('folders','readonly',s=>s.getAll());
 const putOutbox=e=>idb('outbox','readwrite',s=>s.put(e));
 const allOutbox=()=>idb('outbox','readonly',s=>s.getAll());
 const delOutbox=id=>idb('outbox','readwrite',s=>s.delete(id));
+const getMeta=key=>idb('meta','readonly',s=>s.get(key));
+const setMeta=(key,value)=>idb('meta','readwrite',s=>s.put({key,...value}));
+const delMeta=key=>idb('meta','readwrite',s=>s.delete(key));
+const putGpx=e=>idb('gpx','readwrite',s=>s.put(e));
+const allGpx=()=>idb('gpx','readonly',s=>s.getAll());
+const gpxIn=async folderId=>(await allGpx()).filter(g=>g.folderId===folderId);
 function updateNote(id,fn){
   return dbp.then(db=>new Promise((ok,no)=>{
     const t=db.transaction('e','readwrite');
@@ -45,11 +53,43 @@ function updateNote(id,fn){
   }));
 }
 
-const fmt=ts=>new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(ts));
-const fname=ts=>new Date(ts+8*3600e3).toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','_');
+function taipeiParts(ts){
+  const iso=new Date(ts+8*3600e3).toISOString();
+  const date=iso.slice(0,10);
+  const time=iso.slice(11,19);
+  return {display:date+' '+time, compact:date.replace(/-/g,'')+'_'+time.replace(/:/g,''), date:date.replace(/-/g,'')};
+}
+const fmt=ts=>taipeiParts(ts).display;
+const fname=ts=>taipeiParts(ts).compact;
 function todayTW(d=new Date()){return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);}
-function safeName(name){return String(name||'').replace(/[\\/:*?"<>|]/g,'_').trim()||'資料夾';}
-function zipFileName(folder,ts){return `${safeName(folder.name)}_${fname(ts)}.zip`;}
+function safeName(name){
+  const s=String(name||'').replace(/[\\/:*?"<>|#\u0000-\u001f]/g,'_').replace(/\s+/g,' ').replace(/^[.\s]+|[.\s]+$/g,'');
+  return s||'資料夾';
+}
+function safeFileName(name){
+  const base=String(name||'').split(/[/\\]/).pop();
+  const s=base.replace(/[\u0000-\u001f\\/:*?"<>|]/g,'_').replace(/^[.\s]+|[.\s]+$/g,'');
+  return s||'track.gpx';
+}
+function dateFromFolderName(name){
+  const s=String(name||'');
+  let m=s.match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if(!m) m=s.match(/(20\d{2})(\d{2})(\d{2})/);
+  if(!m) return '';
+  const mo=+m[2], d=+m[3];
+  if(mo<1||mo>12||d<1||d>31) return '';
+  return m[1]+String(mo).padStart(2,'0')+String(d).padStart(2,'0');
+}
+function folderDateCompact(folder, notes){
+  const fromName=dateFromFolderName(folder&&folder.name);
+  if(fromName) return fromName;
+  const sorted=(notes||[]).filter(n=>n&&n.ts!=null).slice().sort((a,b)=>a.ts-b.ts);
+  if(sorted.length) return taipeiParts(sorted[0].ts).date;
+  if(folder&&folder.created) return taipeiParts(folder.created).date;
+  return taipeiParts(Date.now()).date;
+}
+function zipBaseName(folder, notes){return `${folderDateCompact(folder, notes)}_${safeName(folder.name)}.zip`;}
+function zipFileName(folder, ts){return zipBaseName(folder, ts!=null?[{ts}]:[]);}
 
 const w=new Worker('worker.js',{type:'module'});const pend={};
 const prog={};
@@ -128,9 +168,43 @@ $('#cam').onchange=async ev=>{
 };
 
 const mapl=l=>l&&l.lat!=null?`https://www.google.com/maps?q=${l.lat.toFixed(6)},${l.lng.toFixed(6)}`:'';
-function txt(e){return [`時間：${fmt(e.ts)}（台北時間）`,e.loc&&e.loc.lat!=null?`位置：${e.loc.lat.toFixed(6)}, ${e.loc.lng.toFixed(6)}（精確度 ±${Math.round(e.loc.acc)} 公尺）\n地圖：${mapl(e.loc)}`:'位置：無法取得',`逐字稿：\n${e.transcript||'（無）'}`].join('\n');}
+function notePhotos(e){
+  if(e&&Array.isArray(e.photos)){
+    const list=e.photos.filter(Boolean);
+    if(list.length) return list;
+  }
+  return e&&e.photo?[e.photo]:[];
+}
+function planFiles(notes){
+  const sorted=(notes||[]).slice().sort((a,b)=>a.ts-b.ts);
+  const used=new Set();
+  return sorted.map(e=>{
+    const photos=[];
+    notePhotos(e).forEach((blob,i)=>{
+      const base=fname(e.ts);
+      let n=`${base}_照片.jpg`;
+      if(used.has(n)) n=`${base}_${e.id}_照片.jpg`;
+      let k=2;
+      while(used.has(n)){n=`${base}_${e.id}_${i}_${k}_照片.jpg`;k++;}
+      used.add(n);
+      photos.push({name:n, blob});
+    });
+    return {note:e, photos};
+  });
+}
+function txt(e, photoNames){
+  const names=photoNames||planFiles([e])[0].photos.map(p=>p.name);
+  const lines=[`時間：${fmt(e.ts)}（台北時間）`];
+  if(e.loc&&e.loc.lat!=null){
+    lines.push(`位置：${e.loc.lat.toFixed(6)}, ${e.loc.lng.toFixed(6)}（精確度 ±${Math.round(e.loc.acc)} 公尺）`);
+    lines.push(`地圖：${mapl(e.loc)}`);
+  }else lines.push('位置：無法取得');
+  for(const n of names) lines.push('照片：'+n);
+  lines.push(`逐字稿：\n${e.transcript||'（無）'}`);
+  return lines.join('\n');
+}
 function folderTxt(folder,notes){
-  const body=notes.slice().sort((a,b)=>a.ts-b.ts).map(txt).join('\n\n----------\n\n');
+  const body=planFiles(notes).map(item=>txt(item.note, item.photos.map(p=>p.name))).join('\n\n----------\n\n');
   return `資料夾：${folder.name}\n\n${body}`;
 }
 function save(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
@@ -139,30 +213,56 @@ function ext(b){
   const part=((b&&b.type)||'').split('/')[1]||'bin';
   return part.split(';')[0].replace('jpeg','jpg').replace('x-m4a','m4a')||'bin';
 }
+function uniqueZipName(name, used){
+  if(!used.has(name)&&name!=='筆記.txt') return name;
+  const dot=name.lastIndexOf('.');
+  const stem=dot>0?name.slice(0,dot):name;
+  const extn=dot>0?name.slice(dot):'';
+  let k=2, final=name;
+  while(used.has(final)||final==='筆記.txt'){final=stem+'_'+k+extn;k++;}
+  return final;
+}
 async function buildFolderZip(folder,notes){
   const z=new JSZip();
-  const sorted=notes.slice().sort((a,b)=>a.ts-b.ts);
-  z.file('筆記.txt',folderTxt(folder,sorted));
-  const used=new Set();
-  for(const e of sorted){
-    if(e.photo){
-      let n=`${fname(e.ts)}_照片.jpg`;
-      if(used.has(n)) n=`${fname(e.ts)}_${e.id}_照片.jpg`;
+  const plan=planFiles(notes);
+  z.file('筆記.txt',folderTxt(folder,notes));
+  const used=new Set(['筆記.txt']);
+  for(const item of plan){
+    for(const p of item.photos){z.file(p.name,p.blob);used.add(p.name);}
+    if(item.note.audio){
+      const n=uniqueZipName(`${fname(item.note.ts)}_錄音.${ext(item.note.audio)}`, used);
       used.add(n);
-      z.file(n,e.photo);
+      z.file(n,item.note.audio);
     }
-    if(e.audio) z.file(`${fname(e.ts)}_錄音.${ext(e.audio)}`,e.audio);
+  }
+  const tracks=(await gpxIn(folder.id)).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-Hant'));
+  for(const g of tracks){
+    const n=uniqueZipName(safeFileName(g.name), used);
+    used.add(n);
+    z.file(n,g.file);
   }
   return z.generateAsync({type:'blob'});
 }
 async function notesIn(folderId){return (await allNotes()).filter(n=>n.folderId===folderId);}
 async function exportFolderTxt(folder){
   const notes=await notesIn(folder.id);
-  await share(new Blob([folderTxt(folder,notes)],{type:'text/plain'}),`${safeName(folder.name)}_${fname(Date.now())}.txt`);
+  await share(new Blob([folderTxt(folder,notes)],{type:'text/plain'}),`${folderDateCompact(folder,notes)}_${safeName(folder.name)}.txt`);
 }
 async function exportFolderZip(folder){
   const notes=await notesIn(folder.id);
-  await share(await buildFolderZip(folder,notes),zipFileName(folder,Date.now()));
+  await share(await buildFolderZip(folder,notes),zipBaseName(folder,notes));
+}
+async function addGpxFile(folderId, file){
+  let name=safeFileName(file.name||'track.gpx');
+  const used=new Set((await gpxIn(folderId)).map(g=>g.name));
+  const dot=name.lastIndexOf('.');
+  const stem=dot>0?name.slice(0,dot):name;
+  const extn=dot>0?name.slice(dot):'';
+  let k=2;
+  while(used.has(name)){name=stem+'_'+k+extn;k++;}
+  const rec={id:'g'+Date.now()+Math.random().toString(16).slice(2),folderId,name,file,added:Date.now()};
+  await putGpx(rec);
+  return rec;
 }
 
 async function migrate(){
@@ -173,6 +273,10 @@ async function migrate(){
   }
   const ids=new Set((await allFolders()).map(f=>f.id));
   if(!localStorage.activeFolder||!ids.has(localStorage.activeFolder)) localStorage.activeFolder=DEFAULT_FOLDER;
+  if(localStorage.driveInboxId){
+    if(!(await getMeta('driveInbox'))) await setMeta('driveInbox',{id:localStorage.driveInboxId});
+    localStorage.removeItem('driveInboxId');
+  }
 }
 async function activeFolder(){
   const folders=await allFolders();
@@ -291,37 +395,63 @@ async function driveJson(url,opts){
   if(!r.ok) throw new Error((data.error&&data.error.message)||('HTTP '+r.status));
   return data;
 }
+function driveQueryEscape(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+async function rememberInbox(id){await setMeta('driveInbox',{id});return id;}
 async function inboxId(token){
   const auth={Authorization:'Bearer '+token};
-  const saved=localStorage.driveInboxId;
-  if(saved){
-    const r=await fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(saved)+'?fields=id,name,trashed',{headers:auth});
-    if(r.ok){const j=await r.json();if(j&&j.id&&!j.trashed) return j.id;}
-    else if(r.status===401){sessionStorage.removeItem('driveToken');throw new Error('授權已失效，請再點一次');}
+  const saved=await getMeta('driveInbox');
+  if(saved&&saved.id){
+    const r=await fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(saved.id)+'?fields=id,name,trashed,mimeType',{headers:auth});
+    if(r.ok){
+      const j=await r.json();
+      if(j&&j.id&&!j.trashed&&j.name===INBOX_NAME&&j.mimeType==='application/vnd.google-apps.folder') return j.id;
+    }else if(r.status===401){sessionStorage.removeItem('driveToken');throw new Error('授權已失效，請再點一次');}
   }
   const q="mimeType = 'application/vnd.google-apps.folder' and trashed = false and name = '"+INBOX_NAME+"'";
   const listUrl='https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'files(id,name)',spaces:'drive',pageSize:'10'});
   const list=await driveJson(listUrl,{headers:auth});
-  if(list.files&&list.files[0]){localStorage.driveInboxId=list.files[0].id;return list.files[0].id;}
+  if(list.files&&list.files[0]) return rememberInbox(list.files[0].id);
   const created=await driveJson('https://www.googleapis.com/drive/v3/files',{method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({name:INBOX_NAME,mimeType:'application/vnd.google-apps.folder'})});
-  localStorage.driveInboxId=created.id;
-  return created.id;
+  return rememberInbox(created.id);
+}
+async function nameTaken(token, parent, name){
+  const q="trashed = false and name = '"+driveQueryEscape(name)+"' and '"+driveQueryEscape(parent)+"' in parents";
+  const url='https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'files(id,name)',spaces:'drive',pageSize:'1'});
+  const list=await driveJson(url,{headers:{Authorization:'Bearer '+token}});
+  return !!(list.files&&list.files.length);
+}
+function collisionName(baseName, ts){
+  const stamp=taipeiParts(ts).compact.split('_')[1];
+  return baseName.replace(/\.zip$/i,'_'+stamp+'.zip');
+}
+async function chooseUploadName(token, parent, baseName){
+  if(!(await nameTaken(token, parent, baseName))) return baseName;
+  let name=collisionName(baseName, Date.now());
+  if(!(await nameTaken(token, parent, name))) return name;
+  const stem=name.replace(/\.zip$/i,'');
+  for(let i=2;i<100;i++){
+    const alt=stem+'_'+i+'.zip';
+    if(!(await nameTaken(token, parent, alt))) return alt;
+  }
+  return stem+'_'+Date.now()+'.zip';
 }
 async function sendZip(token,name,blob){
   const parent=await inboxId(token);
+  const finalName=await chooseUploadName(token, parent, name);
   const boundary='pvn'+Math.random().toString(16).slice(2);
-  const meta=JSON.stringify({name,parents:[parent]});
+  const meta=JSON.stringify({name:finalName,parents:[parent]});
   const body=new Blob([
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`,
     `--${boundary}\r\nContent-Type: application/zip\r\n\r\n`,
     blob,
     `\r\n--${boundary}--`
   ]);
-  return driveJson('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',{
+  const sent=await driveJson('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',{
     method:'POST',
     headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary},
     body
   });
+  return {id:sent.id, name:sent.name||finalName};
 }
 async function uploadFolder(folderId){
   if(!clientIdValue()){
@@ -331,8 +461,9 @@ async function uploadFolder(folderId){
   }
   const folder=(await allFolders()).find(f=>f.id===folderId);
   if(!folder) throw new Error('找不到資料夾');
-  const name=zipFileName(folder,Date.now());
-  const zipBlob=await buildFolderZip(folder,await notesIn(folder.id));
+  const notes=await notesIn(folder.id);
+  const name=zipBaseName(folder,notes);
+  const zipBlob=await buildFolderZip(folder,notes);
   if(!navigator.onLine){
     await putOutbox({id:'q'+Date.now()+Math.random().toString(16).slice(2),folderId:folder.id,name,zip:zipBlob,created:Date.now()});
     setUpStatus('目前沒有網路，已排入待上傳。連線後會自動再試；若需要重新授權，請再點一次。');
@@ -340,9 +471,9 @@ async function uploadFolder(folderId){
   }
   setUpStatus('上傳中…');
   const token=await ensureToken(true);
-  await sendZip(token,name,zipBlob);
-  setUpStatus('已送到「'+INBOX_NAME+'」：'+name);
-  return {ok:true,name};
+  const sent=await sendZip(token,name,zipBlob);
+  setUpStatus('已送到「'+INBOX_NAME+'」：'+sent.name);
+  return {ok:true,name:sent.name};
 }
 const uploading=new Set();
 async function onUpload(id){
@@ -364,9 +495,9 @@ async function flushOutbox(){
   catch(e){setUpStatus('已恢復網路。請再點「☁️ 送到記錄高高手」完成上傳。');return;}
   for(const item of items){
     try{
-      await sendZip(token,item.name,item.zip);
+      const sent=await sendZip(token,item.name,item.zip);
       await delOutbox(item.id);
-      setUpStatus('已送到「'+INBOX_NAME+'」：'+item.name);
+      setUpStatus('已送到「'+INBOX_NAME+'」：'+sent.name);
     }catch(err){
       setUpStatus('上傳失敗：'+err.message);
       return;
@@ -377,6 +508,7 @@ async function flushOutbox(){
 async function render(){
   const folders=(await allFolders()).sort((a,b)=>(a.created||0)-(b.created||0));
   const active=await activeFolder();
+  const gpxAll=await allGpx();
   $('#activeName').textContent=active?active.name:'未分類';
   const box=$('#folders');
   box.replaceChildren();
@@ -384,6 +516,8 @@ async function render(){
     const row=el('div','folder-row');
     row.dataset.folder=f.id;
     row.append(el('div','fname',(active&&f.id===active.id?'● ':'')+f.name));
+    const tracks=gpxAll.filter(g=>g.folderId===f.id);
+    if(tracks.length) row.append(el('small','gpxnames','GPX：'+tracks.map(g=>g.name).join('、')));
     if(!active||f.id!==active.id) row.append(button('sec use','使用',()=>useFolder(f.id)));
     else row.append(el('small','', '使用中'));
     row.append(button('sec rename','重新命名',()=>{
@@ -392,6 +526,20 @@ async function render(){
     }));
     row.append(button('sec txtf','匯出 .txt',()=>exportFolderTxt(f).catch(err=>alert(err.message))));
     row.append(button('sec zipf','匯出 .zip',()=>exportFolderZip(f).catch(err=>alert(err.message))));
+    const gpxInput=document.createElement('input');
+    gpxInput.type='file';
+    gpxInput.className='gpx';
+    gpxInput.accept='.gpx,application/gpx+xml';
+    gpxInput.multiple=true;
+    gpxInput.hidden=true;
+    gpxInput.onchange=async ev=>{
+      const list=[...(ev.target.files||[])];
+      ev.target.value='';
+      for(const file of list) await addGpxFile(f.id, file);
+      await render();
+    };
+    row.append(gpxInput);
+    row.append(button('sec gpxb','加入 GPX',()=>gpxInput.click()));
     row.append(button('drive','☁️ 送到記錄高高手',()=>onUpload(f.id)));
     box.append(row);
   }
@@ -447,14 +595,15 @@ async function render(){
   }
 }
 
-window.pvn={allNotes,allFolders,allOutbox,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,fname};
+window.pvn={allNotes,allFolders,allOutbox,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn};
 
-function saveClient(){
+async function saveClient(){
   const v=$('#clientId').value.trim();
   if(v) localStorage.gdriveClientId=v;
   else localStorage.removeItem('gdriveClientId');
   sessionStorage.removeItem('driveToken');
   localStorage.removeItem('driveInboxId');
+  await delMeta('driveInbox');
   setUpStatus(v?'已儲存 Client ID':'已清除 Client ID');
 }
 
