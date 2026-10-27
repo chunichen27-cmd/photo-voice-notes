@@ -62,13 +62,15 @@ const paths = await p.evaluate(async () => {
   const shellKeys = (await caches.keys()).filter(k => k.startsWith('shell-'));
   const cache = await caches.open(shellKeys[0]);
   const urls = (await cache.keys()).map(r => new URL(r.url).pathname);
-  return {scope: reg.scope, shells: shellKeys, urls};
+  return {scope: reg.scope, shells: shellKeys, urls, cache: self.APP_CACHE, version: self.APP_RELEASE.version, date: self.APP_RELEASE.date, label: document.querySelector('#appver').textContent};
 });
 console.log('sw', JSON.stringify(paths));
 const expectedScope = new URL('./', base).href;
 if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
-if (paths.shells.join() !== 'shell-v9') fail('cache ' + paths.shells.join());
-for (const name of ['config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
+const expectedCache = 'shell-v' + paths.version + '-' + paths.date.replace(/-/g, '');
+if (paths.cache !== expectedCache || paths.shells.join() !== expectedCache) fail('cache ' + paths.shells.join() + ' vs ' + paths.cache);
+if (paths.label !== '版本 v' + paths.version + '（' + paths.date + '）') fail('version label ' + paths.label);
+for (const name of ['version.js', 'config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
 const manifest = await (await fetch(new URL('manifest.webmanifest', base))).json();
@@ -78,6 +80,11 @@ if (JSON.stringify(purposes) !== JSON.stringify(['any icon-192.png', 'any icon-5
 const apple = await p.locator('link[rel="apple-touch-icon"]').getAttribute('href');
 const icon = await p.locator('link[rel="icon"]').first().getAttribute('href');
 if (apple !== 'apple-touch-icon.png' || !icon.includes('favicon')) fail('head icons ' + apple + ' ' + icon);
+if (await p.locator('#updatebanner').getAttribute('hidden') === null) fail('update banner visible before an update');
+await p.evaluate(() => offerUpdate({postMessage(msg){ window.__updateMsg = msg; }}));
+if (await p.locator('#updatebanner').innerText() !== '有新版，點此更新') fail('banner text');
+await p.click('#updatebanner');
+if ((await p.evaluate(() => window.__updateMsg && window.__updateMsg.type)) !== 'skip-waiting') fail('banner did not activate the waiting worker');
 
 const today = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
 if (await p.inputValue('#folderName') !== today) fail('default folder name ' + await p.inputValue('#folderName'));
@@ -184,6 +191,7 @@ const shaped = await p.evaluate(() => {
 if (!shaped.text.includes('時間：2026-10-26 12:37:05（台北時間）')) fail(shaped.text);
 if (shaped.bare.includes('照片：')) fail('photo line without a photo');
 if (!shaped.text.includes('照片：20261026_123705_照片.jpg\n逐字稿：\n山路') || shaped.names[0] !== '20261026_123705_照片.jpg') fail(shaped.text);
+if (shaped.text.includes('類型：')) fail('photo note type line ' + shaped.text);
 const lines2 = [...shaped.text2.matchAll(/照片：(\S+)/g)].map(m => m[1]);
 if (shaped.names2.length !== 2 || new Set(shaped.names2).size !== 2 || lines2.join() !== shaped.names2.join()) fail('multi photo ' + lines2.join(','));
 if (shaped.base !== '20261026_打鐵寮古道.zip') fail('base name ' + shaped.base);
@@ -572,6 +580,100 @@ await p.waitForFunction(() => !document.querySelector('#halt').hidden);
 await p.click('#halt');
 await p.waitForFunction(() => document.querySelector('#halt').hidden);
 console.log('field flow ok');
+await p.waitForFunction(() => ![...document.querySelectorAll('#list .s')].some(s => s.textContent.includes('辨識中')));
+
+const voicePlan = await p.evaluate(() => {
+  const photo = (ts, text) => ({id: ts, ts, photo: new Blob(['p']), transcript: text, loc: null});
+  const voice = {id: 20, ts: Date.parse('2026-10-26T02:00:00Z'), kind: 'voice', transcript: '語音乙', loc: {lat: 24.5, lng: 121.5, acc: 6}};
+  const notes = [photo(Date.parse('2026-10-26T03:00:00Z'), '照片丙'), voice, photo(Date.parse('2026-10-26T01:00:00Z'), '照片甲')];
+  return pvn.folderTxt({name: '測試'}, notes);
+});
+const voiceParts = voicePlan.split('\n\n----------\n\n');
+if (voiceParts.length !== 3 || !voiceParts[0].includes('照片甲') || !voiceParts[1].includes('類型：語音筆記') || voiceParts[1].includes('照片：') || !voiceParts[1].includes('逐字稿：\n語音乙') || !voiceParts[2].includes('照片丙')) fail('voice order ' + voicePlan);
+
+await p.evaluate(async () => {
+  window.__geoCurrent = 0;
+  window.__micMode = 'ok';
+  window.__transcribeStub = async () => ({type: 'result', text: '只是一段語音'});
+  const geo = navigator.geolocation;
+  const orig = geo.getCurrentPosition.bind(geo);
+  geo.getCurrentPosition = function(ok, err, opts) {
+    window.__geoCurrent++;
+    window.__lastGeoOpts = opts;
+    return orig(ok, err, opts);
+  };
+  window.__geoOk({timestamp: Date.now(), coords: {latitude: 25.111, longitude: 121.555, accuracy: 8, altitude: 10}});
+  await pvn.flushFixes();
+});
+await p.click('#vnote');
+await p.waitForFunction(() => !document.querySelector('#halt').hidden && document.querySelector('#vnote').hidden && document.querySelector('#shoot').hidden);
+if (await p.evaluate(() => window.__geoCurrent) !== 0) fail('fresh track fix still called getCurrentPosition');
+await p.click('#halt');
+await p.waitForFunction(() => {
+  const card = document.querySelector('#list .card');
+  return card && card.innerText.includes('🎙 語音筆記') && card.querySelector('textarea').value.includes('只是一段語音') && card.innerText.includes('25.111000') && card.querySelector('a') && !card.querySelector('audio');
+});
+const voiceZip = await p.evaluate(async () => {
+  const folder = await pvn.activeFolder();
+  const notes = await pvn.notesIn(folder.id);
+  const voice = notes.find(n => n.kind === 'voice' && n.transcript.includes('只是一段語音'));
+  const z = await JSZip.loadAsync(await pvn.buildFolderZip(folder, notes));
+  return {txt: pvn.folderTxt(folder, notes), names: Object.keys(z.files), audio: !!(voice && voice.audio), fname: pvn.fname(voice.ts)};
+});
+if (!voiceZip.txt.includes('類型：語音筆記') || !voiceZip.txt.includes('逐字稿：\n只是一段語音') || !voiceZip.txt.includes('25.111000, 121.555000')) fail('voice txt ' + voiceZip.txt.slice(0, 500));
+const voiceBlock = voiceZip.txt.split('\n\n----------\n\n').find(s => s.includes('類型：語音筆記') && s.includes('只是一段語音'));
+if (!voiceBlock || voiceBlock.includes('照片：') || !voiceBlock.includes('類型：語音筆記\n逐字稿：')) fail('voice block ' + voiceBlock);
+if (voiceZip.audio) fail('successful voice note kept audio');
+if (voiceZip.names.some(n => n.includes(voiceZip.fname) && n.includes('錄音'))) fail('voice audio in zip ' + voiceZip.names.join(','));
+if (voiceZip.txt.includes('類型：語音筆記') && voiceZip.txt.includes('這是圖說') && voiceZip.txt.split('類型：語音筆記').length !== 2) fail('photo notes marked as voice');
+
+await p.click('#stopTrack');
+await p.waitForFunction(() => !document.querySelector('#startTrack').hidden);
+await p.evaluate(() => {
+  window.__micMode = 'ok';
+  window.__transcribeStub = async () => ({type: 'error', msg: '太吵'});
+  navigator.geolocation.getCurrentPosition = function(ok, err, opts) {
+    window.__geoCurrent++;
+    window.__lastGeoOpts = opts;
+    err({code: 1, message: 'denied'});
+  };
+});
+await p.click('#vnote');
+await p.waitForFunction(() => !document.querySelector('#halt').hidden);
+await p.click('#halt');
+await p.waitForFunction(() => {
+  const card = document.querySelector('#list .card');
+  return card && card.innerText.includes('無法取得位置') && card.innerText.includes('辨識失敗');
+});
+const voiceKept = await p.evaluate(async () => {
+  const folder = await pvn.activeFolder();
+  const notes = await pvn.notesIn(folder.id);
+  const voice = notes.filter(n => n.kind === 'voice' && n.audio);
+  const z = await JSZip.loadAsync(await pvn.buildFolderZip(folder, notes));
+  const names = Object.keys(z.files);
+  return {n: voice.length, leaked: voice.some(n => names.some(name => name.includes(pvn.fname(n.ts)) && name.includes('錄音')))};
+});
+if (voiceKept.n < 1 || voiceKept.leaked) fail('voice failure audio ' + JSON.stringify(voiceKept));
+
+await p.evaluate(() => {
+  window.__geoCurrent = 0;
+  window.__micMode = 'ok';
+  window.__transcribeStub = async () => ({type: 'result', text: '另外定位'});
+  navigator.geolocation.getCurrentPosition = function(ok, err, opts) {
+    window.__geoCurrent++;
+    window.__lastGeoOpts = opts;
+    ok({coords: {latitude: 24.5, longitude: 121.2, accuracy: 12}, timestamp: Date.now()});
+  };
+});
+await p.click('#vnote');
+await p.click('#halt');
+await p.waitForFunction(() => {
+  const card = document.querySelector('#list .card');
+  return card && card.querySelector('textarea') && card.querySelector('textarea').value.includes('另外定位') && card.innerText.includes('24.500000');
+});
+const geoOpts = await p.evaluate(() => window.__lastGeoOpts);
+if (await p.evaluate(() => window.__geoCurrent) !== 1 || !geoOpts || geoOpts.enableHighAccuracy !== true || geoOpts.timeout !== 15000) fail('one-off geo ' + JSON.stringify(geoOpts));
+console.log('voice notes ok');
 
 if (errors.length) fail('page errors: ' + errors.join(' | '));
 await b.close();
