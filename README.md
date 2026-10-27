@@ -75,7 +75,7 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 辨識在這支手機上進行，錄音不會上傳。模型還沒下載時，不會自動轉成文字，請先下載模型，或稍後再按「📝 轉成文字」。
 
-畫面下方有一行版本，例如「版本 v1.2（2026-10-27）」。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。
+畫面下方有一行版本，例如「版本 v1.3（2026-10-27）」，旁邊有隱私權和使用條款。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。
 
 ### 匯出筆記
 
@@ -110,8 +110,9 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 2. User type 選「外部」（External）→ 建立。
 3. 應用程式名稱填「離線筆記」。使用者支援電子郵件、開發人員聯絡電子郵件都填自己的 Gmail → 儲存並繼續。
 4. 範圍（Scopes）→「新增或移除範圍」。只加入 `https://www.googleapis.com/auth/drive.file`。清單裡沒有就用手動新增。不要加完整的 Drive 範圍。更新 → 儲存並繼續。
-5. 發布狀態改成正式版（In production / 發布應用程式）。`drive.file` 是非敏感範圍，只有這個範圍時不必送 Google 驗證，一般 Google 帳號都能在同意畫面上允許。
-6. 測試模式只允許列在測試使用者裡的帳號。Google 可能不讓專案擁有者的 Gmail 加進測試使用者（顯示不適用）。這種情況不必硬加，直接發布成正式版即可。App 的登入流程不用改。
+5. 品牌頁要先填隱私權政策與服務條款網址，否則無法發布。隱私權：`https://chunichen27-cmd.github.io/photo-voice-notes/privacy.html`。服務條款：`https://chunichen27-cmd.github.io/photo-voice-notes/terms.html`。這兩頁要等 GitHub Pages 發佈這次更新後才能打開。
+6. 發布狀態改成正式版（In production / 發布應用程式）。`drive.file` 是非敏感範圍，只有這個範圍時不必送 Google 驗證，一般 Google 帳號都能在同意畫面上允許。
+7. 測試模式只允許列在測試使用者裡的帳號。Google 可能不讓專案擁有者的 Gmail 加進測試使用者（顯示不適用）。這種情況不必硬加，直接發布成正式版即可。App 的登入流程不用改。
 
 ### 3. 建立網頁用的 OAuth Client ID
 
@@ -137,7 +138,7 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 ### 介面若已改成 Google Auth platform
 
-- 品牌（Branding）：應用程式名稱與電子郵件。
+- 品牌（Branding）：應用程式名稱、電子郵件、隱私權政策 `https://chunichen27-cmd.github.io/photo-voice-notes/privacy.html`、服務條款 `https://chunichen27-cmd.github.io/photo-voice-notes/terms.html`。
 - 目標對象（Audience）：外部，並發布為正式版。只有 `drive.file` 時不必驗證。若測試中無法把擁有者的 Gmail 加為測試使用者，改正式版即可。
 - 資料存取（Data Access）：新增範圍 `https://www.googleapis.com/auth/drive.file`。
 - 用戶端（Clients）：建立「網頁應用程式」，JavaScript 來源填 `https://chunichen27-cmd.github.io`。
