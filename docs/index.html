@@ -10,6 +10,8 @@ button,label.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4p
 button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0;scroll-margin-bottom:240px}
 img{max-width:100%;border-radius:8px}textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
 textarea{min-height:80px}small,.hint{color:#666}
+.ver{color:#888;font-size:13px;text-align:center;margin:16px 0 4px}
+#updatebanner{display:block;width:100%;margin:8px 0;background:#9d1e19}
 .active-name{font-size:22px;font-weight:700;margin:4px 0}
 .track-live{font-weight:700;color:#9d1e19;min-height:1.4em}
 .track-row{padding:6px 0;border-top:1px solid #eee}
@@ -21,7 +23,9 @@ label.field{display:block;margin-top:8px;color:#333}
 #recthumb{display:block;width:96px;height:96px;object-fit:cover;border-radius:12px;margin:0 auto 8px;background:#eee}
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .dock-inner{max-width:640px;margin:auto}
-.dock .big{display:block;width:100%;box-sizing:border-box;text-align:center;font-size:28px;font-weight:700;padding:20px 16px;margin:0;border-radius:16px}
+.dock .big{display:block;width:100%;box-sizing:border-box;text-align:center;font-size:28px;font-weight:700;padding:20px 16px;margin:0;border-radius:16px;background:#1f6feb;color:#fff}
+.dock-acts{display:flex;gap:8px}
+.dock-acts .big{flex:1;font-size:22px;padding:18px 8px}
 .dock .rec-on{background:#9d1e19}
 .rec-ind{display:flex;align-items:center;justify-content:center;gap:8px;font-size:22px;font-weight:700;color:#9d1e19;margin-bottom:8px}
 .rec-ind .dot{width:14px;height:14px;border-radius:50%;background:#9d1e19;animation:pulse 1s ease-in-out infinite}
@@ -31,7 +35,7 @@ label.field{display:block;margin-top:8px;color:#333}
 <div class="card">
   <div>目前資料夾</div>
   <div id="activeName" class="active-name">未分類</div>
-  <div class="hint">先選這一天或這一趟，開始記錄軌跡，再用下方的拍照。拍完會直接錄音，停止後變成這張照片的圖說。一天結束再停止軌跡、送到記錄高高手。</div>
+  <div class="hint">先選這一天或這一趟，開始記錄軌跡。下方可拍照，或只按錄音筆記。一天結束再停止軌跡、送到記錄高高手。</div>
   <div id="trackbox">
     <div id="trackstat" class="track-live"></div>
     <button type="button" id="startTrack">開始記錄軌跡</button>
@@ -56,14 +60,20 @@ label.field{display:block;margin-top:8px;color:#333}
   <label class="field">OAuth Client ID<input id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com"></label>
   <button type="button" id="saveClient" class="sec">儲存 Client ID</button>
 </div>
+<p id="appver" class="ver"></p>
+<button type="button" id="updatebanner" hidden>有新版，點此更新</button>
 <div id="dock" class="dock"><div class="dock-inner">
   <img id="recthumb" alt="這張照片" hidden>
   <div id="recind" class="rec-ind" hidden><span class="dot"></span>錄音中</div>
   <button type="button" id="halt" class="big rec-on" hidden>停止錄音</button>
   <button type="button" id="speak" class="big" hidden>🎙 開始錄音</button>
-  <label id="shoot" class="big">📷 拍照<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
+  <div class="dock-acts">
+    <label id="shoot" class="big">📷 拍照<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
+    <button type="button" id="vnote" class="big">🎙 錄音筆記</button>
+  </div>
   <div id="capmsg" class="hint"></div>
 </div></div>
+<script src="version.js"></script>
 <script src="config.js"></script>
 <script src="vendor/cn2t.js"></script>
 <script src="vendor/jszip.min.js"></script>

@@ -3,7 +3,31 @@ const toTW=OpenCC.Converter({from:'cn',to:'tw'});
 const DEFAULT_FOLDER='uncat';
 const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
 const INBOX_NAME='記錄高高手收件匣';
-if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+let updating=false;
+function offerUpdate(worker){
+  const b=$('#updatebanner');
+  if(!b||!worker) return;
+  b.hidden=false;
+  b.onclick=()=>{updating=true;worker.postMessage({type:'skip-waiting'});};
+}
+function watchUpdates(){
+  if(!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    const arm=w=>{if(!w) return;w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller) offerUpdate(reg.waiting||w);});};
+    if(reg.waiting&&navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+    arm(reg.installing);
+    reg.addEventListener('updatefound',()=>arm(reg.installing));
+  });
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(updating) location.reload();});
+}
+watchUpdates();
+function paintVersion(){
+  const n=$('#appver');
+  if(!n||!self.APP_RELEASE) return;
+  const r=self.APP_RELEASE;
+  n.textContent='版本 v'+r.version+'（'+r.date+'）';
+}
+paintVersion();
 if(navigator.storage&&navigator.storage.persist) navigator.storage.persist();
 
 const dbp=new Promise((ok,no)=>{
@@ -384,12 +408,15 @@ function planFiles(notes){
   });
 }
 function txt(e, photoNames){
-  const names=photoNames||planFiles([e])[0].photos.map(p=>p.name);
+  const voice=e&&e.kind==='voice';
+  const names=voice?[]:(photoNames||planFiles([e])[0].photos.map(p=>p.name));
   const lines=[`時間：${fmt(e.ts)}（台北時間）`];
-  for(const n of names) lines.push('照片：'+n);
+  if(voice) lines.push('類型：語音筆記');
+  else for(const n of names) lines.push('照片：'+n);
   lines.push(`逐字稿：\n${e.transcript||'（無）'}`);
   if(e.loc&&e.loc.lat!=null){
-    lines.push(`位置：${e.loc.lat.toFixed(6)}, ${e.loc.lng.toFixed(6)}（精確度 ±${Math.round(e.loc.acc)} 公尺）`);
+    const acc=Number.isFinite(Number(e.loc.acc))?`（精確度 ±${Math.round(e.loc.acc)} 公尺）`:'';
+    lines.push(`位置：${e.loc.lat.toFixed(6)}, ${e.loc.lng.toFixed(6)}${acc}`);
     lines.push(`地圖：${mapl(e.loc)}`);
   }else lines.push('位置：無法取得');
   return lines.join('\n');
@@ -420,7 +447,7 @@ async function buildFolderZip(folder,notes){
   const used=new Set(['筆記.txt']);
   for(const item of plan){
     for(const p of item.photos){z.file(p.name,p.blob);used.add(p.name);}
-    if(item.note.audio){
+    if(item.note.audio&&item.note.kind!=='voice'){
       const n=uniqueZipName(`${fname(item.note.ts)}_錄音.${ext(item.note.audio)}`, used);
       used.add(n);
       z.file(n,item.note.audio);
@@ -578,12 +605,60 @@ async function record(e){
 function paintDock(){
   const recording=!!rec;
   const fallback=!recording&&!!voiceNoteId;
-  const halt=$('#halt'), speak=$('#speak'), shoot=$('#shoot'), ind=$('#recind'), thumb=$('#recthumb');
+  const halt=$('#halt'), speak=$('#speak'), shoot=$('#shoot'), vnote=$('#vnote'), ind=$('#recind'), thumb=$('#recthumb');
   if(halt) halt.hidden=!recording;
   if(ind) ind.hidden=!recording;
   if(thumb) thumb.hidden=!recording||!thumb.getAttribute('src');
   if(speak) speak.hidden=!fallback;
   if(shoot) shoot.hidden=recording||fallback;
+  if(vnote) vnote.hidden=recording||fallback;
+}
+function freshTrackFix(){
+  if(!activeTrackId||!lastPoint) return null;
+  if(!Number.isFinite(lastPoint.lat)||!Number.isFinite(lastPoint.lon)) return null;
+  if(!Number.isFinite(lastPoint.time)||Date.now()-lastPoint.time>=30000) return null;
+  const loc={lat:lastPoint.lat,lng:lastPoint.lon};
+  if(Number.isFinite(lastPoint.acc)) loc.acc=lastPoint.acc;
+  return loc;
+}
+function askNoteLoc(){
+  const fix=freshTrackFix();
+  if(fix) return Promise.resolve(fix);
+  return new Promise(ok=>{
+    if(!navigator.geolocation) return ok(null);
+    let done=false;
+    const finish=v=>{if(!done){done=true;ok(v);}};
+    navigator.geolocation.getCurrentPosition(
+      p=>finish({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),
+      ()=>finish(null),
+      {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+    );
+  });
+}
+async function startVoiceNote(locPromise){
+  if(rec){setCapMsg('請先按停止錄音。');return;}
+  const ts=Date.now();
+  const folder=await activeFolder();
+  const used=new Set((await allNotes()).map(n=>n.id));
+  let id=ts;
+  while(used.has(id)) id+=1;
+  const seeded=freshTrackFix();
+  await putNote({id,ts,kind:'voice',transcript:'',folderId:folder.id,loc:seeded||{pending:true}});
+  setRecThumb(null);
+  voiceNoteId=null;
+  const ok=await startVoice(id);
+  if(recNoteId===id) setCapMsg('');
+  else if(!ok){voiceNoteId=id;setCapMsg('無法自動開始錄音。請按「開始錄音」。');}
+  if(!seeded){
+    (locPromise||askNoteLoc()).then(async loc=>{
+      await updateNote(id,cur=>{cur.loc=loc&&loc.lat!=null?loc:null;});
+      await render();
+    });
+  }
+  await render();
+  const card=document.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
+  if(card) card.scrollIntoView({block:'nearest'});
+  paintDock();
 }
 function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;}
 function button(cls,text,onclick){const b=el('button',cls,text);b.type='button';b.onclick=onclick;return b;}
@@ -1057,12 +1132,14 @@ async function render(){
   for(const e of notes){
     const c=el('div','card');
     c.dataset.id=String(e.id);
-    if(e.photo){const img=document.createElement('img');img.alt='照片';img.src=URL.createObjectURL(e.photo);c.append(img);}
+    if(e.kind==='voice') c.append(el('div','kind','🎙 語音筆記'));
+    else if(e.photo){const img=document.createElement('img');img.alt='照片';img.src=URL.createObjectURL(e.photo);c.append(img);}
     c.append(el('div','', '🕒 '+fmt(e.ts)));
     const loc=el('div');
     if(e.loc?.pending) loc.textContent='📍 定位中…';
     else if(e.loc?.lat!=null){
-      loc.append('📍 '+e.loc.lat.toFixed(6)+', '+e.loc.lng.toFixed(6)+'（±'+Math.round(e.loc.acc)+' 公尺） ');
+      const acc=Number.isFinite(Number(e.loc.acc))?'（±'+Math.round(e.loc.acc)+' 公尺）':'';
+      loc.append('📍 '+e.loc.lat.toFixed(6)+', '+e.loc.lng.toFixed(6)+acc+' ');
       const a=document.createElement('a');a.href=mapl(e.loc);a.target='_blank';a.rel='noopener';a.textContent='地圖';loc.append(a);
     }else loc.textContent='📍 無法取得位置'+(e.loc?.error?'（'+e.loc.error+'）':'');
     c.append(loc);
@@ -1078,7 +1155,7 @@ async function render(){
     if(!e.audio) tb.hidden=true;
     c.append(tb);
     const ta=document.createElement('textarea');
-    ta.placeholder='說明，當作這張照片的圖說（可編輯）';
+    ta.placeholder=e.kind==='voice'?'語音筆記（可編輯）':'說明，當作這張照片的圖說（可編輯）';
     ta.value=e.transcript||'';
     ta.onchange=()=>updateNote(e.id,cur=>{cur.transcript=ta.value;});
     c.append(ta);
@@ -1102,7 +1179,7 @@ async function render(){
   paintDock();
 }
 
-window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,compressPhoto,readExifOrientation,releaseMic,flushFixes:()=>pointChain};
+window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,compressPhoto,readExifOrientation,releaseMic,freshTrackFix,askNoteLoc,flushFixes:()=>pointChain};
 
 async function saveClient(){
   const v=$('#clientId').value.trim();
@@ -1126,6 +1203,15 @@ async function saveClient(){
   if($('#stopTrack')) $('#stopTrack').onclick=()=>finishTrack().catch(err=>setTrackMsg(err.message));
   if($('#sendDay')) $('#sendDay').onclick=()=>onUpload(localStorage.activeFolder||DEFAULT_FOLDER);
   if($('#shoot')) $('#shoot').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
+  if($('#vnote')){
+    $('#vnote').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
+    $('#vnote').onclick=()=>{
+      unlockAudio();
+      void armMic().catch(()=>{});
+      const locP=askNoteLoc();
+      startVoiceNote(locP).catch(err=>setCapMsg(err.message||'無法開始錄音'));
+    };
+  }
   if($('#speak')){
     $('#speak').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
     $('#speak').onclick=async()=>{
