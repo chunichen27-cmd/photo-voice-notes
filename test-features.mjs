@@ -70,6 +70,12 @@ if (paths.scope !== expectedScope) fail('scope ' + paths.scope);
 const expectedCache = 'shell-v' + paths.version + '-' + paths.date.replace(/-/g, '');
 if (paths.cache !== expectedCache || paths.shells.join() !== expectedCache) fail('cache ' + paths.shells.join() + ' vs ' + paths.cache);
 if (paths.label !== '版本 v' + paths.version + '（' + paths.date + '）') fail('version label ' + paths.label);
+if (paths.urls.some(u => u.endsWith('/privacy.html') || u.endsWith('/terms.html'))) fail('legal pages precached');
+const footer = await p.evaluate(() => ({
+  privacy: document.querySelector('a[href="privacy.html"]')?.textContent || '',
+  terms: document.querySelector('a[href="terms.html"]')?.textContent || ''
+}));
+if (!footer.privacy.includes('隱私') || !footer.terms.includes('使用條款')) fail('footer links ' + JSON.stringify(footer));
 for (const name of ['version.js', 'config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
@@ -689,6 +695,25 @@ await p.waitForFunction(() => {
 const geoOpts = await p.evaluate(() => window.__lastGeoOpts);
 if (await p.evaluate(() => window.__geoCurrent) !== 1 || !geoOpts || geoOpts.enableHighAccuracy !== true || geoOpts.timeout !== 15000) fail('one-off geo ' + JSON.stringify(geoOpts));
 console.log('voice notes ok');
+
+await p.locator('a[href="privacy.html"]').evaluate(a => a.scrollIntoView({block:'center'}));
+await p.locator('a[href="privacy.html"]').click();
+await p.waitForFunction(() => document.querySelector('h1')?.textContent === '隱私權政策');
+const privacyText = await p.locator('body').innerText();
+for (const bit of ['Chun-I Chen', 'IndexedDB', 'drive.file', '送到記錄高高手', 'chunichen27@gmail.com', '沒有廣告']) {
+  if (!privacyText.includes(bit)) fail('privacy missing ' + bit);
+}
+const privacyH2 = await p.locator('h2').first().evaluate(el => getComputedStyle(el).color);
+if (privacyH2 !== 'rgb(157, 30, 25)') fail('privacy color ' + privacyH2);
+await p.locator('a[href="terms.html"]').click();
+await p.waitForFunction(() => document.querySelector('h1')?.textContent === '使用條款');
+const termsText = await p.locator('body').innerText();
+for (const bit of ['個人', '依現況提供', '不附任何', '保證', 'Chun-I Chen']) {
+  if (!termsText.includes(bit)) fail('terms missing ' + bit);
+}
+await p.locator('a[href="index.html"]').click();
+await p.waitForFunction(() => (document.querySelector('#appver')?.textContent || '').includes('v' + self.APP_RELEASE.version));
+console.log('legal pages ok');
 
 if (errors.length) fail('page errors: ' + errors.join(' | '));
 await b.close();
