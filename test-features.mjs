@@ -265,8 +265,23 @@ const auto = await p.evaluate(async id => {
 console.log('auto', auto.transcript, auto.status);
 if (auto.hasAudio || !auto.transcript.includes('自動轉好的句子') || !auto.status.includes('已刪除錄音')) fail('auto transcribe failed');
 
+const defaultClient = '551882248016-1vdbcpur7tluueq3gnpqfmb7nlntm6i9.apps.googleusercontent.com';
+if (await p.inputValue('#clientId') !== defaultClient) fail('default client id not shown');
+await p.evaluate(() => { window.__savedClient = window.APP_CONFIG.GOOGLE_CLIENT_ID; window.APP_CONFIG.GOOGLE_CLIENT_ID = ''; });
 await p.click('[data-folder="uncat"] button.drive');
 await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('請先貼上 Google OAuth Client ID'));
+await p.evaluate(() => { window.APP_CONFIG.GOOGLE_CLIENT_ID = window.__savedClient; localStorage.removeItem('gdriveClientId'); });
+await p.evaluate(() => {
+  window.__seenClients = [];
+  window.google = {accounts: {oauth2: {initTokenClient(cfg) {
+    window.__seenClients.push(cfg.client_id);
+    return {requestAccessToken(){ cfg.callback({error: 'interaction_required'}); }};
+  }}}};
+});
+await p.click(`[data-folder="${folderId}"] button.drive`);
+await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('interaction_required'));
+const usedDefault = await p.evaluate(() => window.__seenClients.slice());
+if (usedDefault[0] !== defaultClient) fail('default client not used ' + usedDefault.join(','));
 await p.fill('#clientId', '123456-abc.apps.googleusercontent.com');
 await p.click('#saveClient');
 await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已儲存 Client ID'));

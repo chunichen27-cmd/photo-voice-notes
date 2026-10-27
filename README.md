@@ -75,7 +75,7 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 辨識在這支手機上進行，錄音不會上傳。模型還沒下載時，不會自動轉成文字，請先下載模型，或稍後再按「📝 轉成文字」。
 
-畫面下方有一行版本，例如「版本 v1.1（2026-10-27）」。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。
+畫面下方有一行版本，例如「版本 v1.2（2026-10-27）」。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。
 
 ### 匯出筆記
 
@@ -85,11 +85,11 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 ### 送到 Google Drive
 
-每個資料夾有「☁️ 送到記錄高高手」。需要網路，而且要先做好下面的 Google 設定、貼上 Client ID。檔案會上傳到你自己的 Google Drive 裡、我的雲端硬碟根目錄的「記錄高高手收件匣」。App 只看得到自己建立的資料夾，會把這個收件匣的 id 記在這台手機，下次找不到才再建立一個。上傳之後 App 不會移動或刪除雲端上的任何檔案。沒有網路時會先排入待上傳，連線後再送；若要重新授權，再點一次按鈕即可。
+每個資料夾有「☁️ 送到記錄高高手」。需要網路。Client ID 已寫在 App 裡，不必再貼。檔案會上傳到你自己的 Google Drive 裡、我的雲端硬碟根目錄的「記錄高高手收件匣」。App 只看得到自己建立的資料夾，會把這個收件匣的 id 記在這台手機，下次找不到才再建立一個。上傳之後 App 不會移動或刪除雲端上的任何檔案。沒有網路時會先排入待上傳，連線後再送；若要重新授權，再點一次按鈕即可。
 
 ## 設定 Google Drive 上傳
 
-上傳用的是瀏覽器裡的 Google 登入（Google Identity Services），沒有自己的伺服器。範圍只申請 `drive.file`，App 只能看到它自己建立的檔案。Client ID 可以貼在 App 的「Google Drive」欄位（存在這台手機的 localStorage），或寫進 `docs/config.js` 的 `GOOGLE_CLIENT_ID`。欄位有值時以欄位為準。
+上傳用的是瀏覽器裡的 Google 登入（Google Identity Services），沒有自己的伺服器。範圍只申請 `drive.file`，App 只能看到它自己建立的檔案。預設 Client ID 在 `docs/config.js` 的 `GOOGLE_CLIENT_ID`，打開就會用。若在 App 的「Google Drive」欄位貼上另一個 ID 並按儲存，存在這台手機的那個值優先；把欄位清掉再儲存，就回到 `config.js` 的預設。
 
 授權的 JavaScript 來源是網址的「協定 + 網域」，**不要**加上 `/photo-voice-notes`：
 
@@ -104,14 +104,14 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 3. 左側「API 和服務」→「程式庫」（Enabled APIs & services → Library）。
 4. 搜尋「Google Drive API」→ 點進去 →「啟用」。
 
-### 2. OAuth 同意畫面（維持測試模式）
+### 2. OAuth 同意畫面
 
 1. 「API 和服務」→「OAuth 同意畫面」（OAuth consent screen）。
 2. User type 選「外部」（External）→ 建立。
 3. 應用程式名稱填「離線筆記」。使用者支援電子郵件、開發人員聯絡電子郵件都填自己的 Gmail → 儲存並繼續。
-4. 範圍（Scopes）→「新增或移除範圍」。加入 `https://www.googleapis.com/auth/drive.file`。清單裡沒有就用手動新增。更新 → 儲存並繼續。
-5. 測試使用者（Test users）→ Add users → 加入自己的 Gmail → 儲存。
-6. 確認發布狀態是「Testing」（測試中）。不要按「發布應用程式」。測試模式只允許列在測試使用者裡的帳號授權。
+4. 範圍（Scopes）→「新增或移除範圍」。只加入 `https://www.googleapis.com/auth/drive.file`。清單裡沒有就用手動新增。不要加完整的 Drive 範圍。更新 → 儲存並繼續。
+5. 發布狀態改成正式版（In production / 發布應用程式）。`drive.file` 是非敏感範圍，只有這個範圍時不必送 Google 驗證，一般 Google 帳號都能在同意畫面上允許。
+6. 測試模式只允許列在測試使用者裡的帳號。Google 可能不讓專案擁有者的 Gmail 加進測試使用者（顯示不適用）。這種情況不必硬加，直接發布成正式版即可。App 的登入流程不用改。
 
 ### 3. 建立網頁用的 OAuth Client ID
 
@@ -123,12 +123,12 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 在電腦上用 `http://localhost:8765` 試上傳時，要把這個網址也加進 JavaScript 來源。正式用手機打開 GitHub Pages 時，來源仍必須有上面的 `github.io`。
 
-### 4. 貼上 Client ID 並上傳
+### 4. 上傳
 
 1. 手機用 Chrome 或 Safari 打開 <https://chunichen27-cmd.github.io/photo-voice-notes/>（建議從主畫面圖示進入）。
-2. 在「Google Drive」貼上用戶端 ID →「儲存 Client ID」。
+2. 「Google Drive」的 Client ID 已帶入 `docs/config.js` 的預設值，不必再貼。只有要改用別的用戶端時，才貼上並按「儲存 Client ID」。
 3. 打開某個資料夾，點「☁️ 送到記錄高高手」。
-4. 第一次會跳出 Google 授權。請用剛才加入的測試使用者登入並允許。
+4. 第一次會跳出 Google 授權。同意畫面已是正式版時，用自己的 Gmail 登入並允許即可。
 5. 成功時畫面會寫已送到「記錄高高手收件匣」。檔名是 `YYYYMMDD_資料夾名稱.zip`，例如 `20261026_打鐵寮古道.zip`。日期優先用資料夾名稱裡的日期，否則用第一筆筆記的日期（都是台北時間）。收件匣裡已經有同名檔時，會改成加上傳當下的 `_HHMMSS`，例如 `20261026_打鐵寮古道_123705.zip`，不會覆寫。
 6. 之後憑證還有效時，再按一次就會直接上傳，不必再選帳號。憑證過期時，同一下按鈕會安靜換發新憑證；若 Google 要求重新同意，才會再跳出視窗。
 7. 到 Google Drive 的「我的雲端硬碟」查看「記錄高高手收件匣」。接收端會自行把處理過的 zip 移到收件匣裡的「已處理」；這個 App 不會代為移動或刪除。
@@ -138,6 +138,6 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 ### 介面若已改成 Google Auth platform
 
 - 品牌（Branding）：應用程式名稱與電子郵件。
-- 目標對象（Audience）：外部、測試中，並新增測試使用者 Gmail。
+- 目標對象（Audience）：外部，並發布為正式版。只有 `drive.file` 時不必驗證。若測試中無法把擁有者的 Gmail 加為測試使用者，改正式版即可。
 - 資料存取（Data Access）：新增範圍 `https://www.googleapis.com/auth/drive.file`。
 - 用戶端（Clients）：建立「網頁應用程式」，JavaScript 來源填 `https://chunichen27-cmd.github.io`。
