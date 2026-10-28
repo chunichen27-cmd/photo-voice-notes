@@ -14,15 +14,14 @@ footer{margin-top:36px;font-size:14px}
 </style></head>
 <body>
 <h1>隱私權政策</h1>
-<p class="meta">離線筆記 · 2026年10月27日 · Chun-I Chen</p>
+<p class="meta">離線筆記 · 2026年10月28日 · Chun-I Chen</p>
 <p>離線筆記是 Chun-I Chen 做的個人離線筆記 App，用來在自己的手機上記照片、語音和軌跡。網址是 <a href="https://chunichen27-cmd.github.io/photo-voice-notes/">https://chunichen27-cmd.github.io/photo-voice-notes/</a>。</p>
 
 <h2>資料留在這台手機</h2>
 <p>照片、錄音、逐字稿和 GPS 軌跡都存在這台手機的 IndexedDB。語音辨識在手機上進行，錄音和逐字稿不會送到辨識伺服器。下載語音模型時，只會把模型檔抓到這台手機，不會把筆記傳出去。</p>
 
-<h2>什麼時候才會送出資料</h2>
-<p>只有你按下「☁️ 送到記錄高高手」時，App 才會把該資料夾的壓縮檔上傳到你自己的 Google Drive。使用的範圍只有 <code>https://www.googleapis.com/auth/drive.file</code>。這個範圍讓 App 只能看到它自己建立的檔案，看不到你雲端硬碟裡的其他檔案。壓縮檔會放進你的雲端硬碟、名為「記錄高高手收件匣」的資料夾。</p>
-<p>登入後的存取權杖只留在這個瀏覽器分頁，用來完成上述上傳，不會送到別的地方。除此之外，App 不會把筆記、照片、錄音、位置或 Google 帳號資料送到任何伺服器。</p>
+<h2>不會上傳</h2>
+<p>這個 App 不會把筆記上傳到任何伺服器，也沒有 Google 登入。照片、錄音、逐字稿和軌跡只在你自己按「💾 存成 zip」或「匯出」時，才會離開這台手機：系統分享選單或下載是你自己存檔、自己選擇要分享給誰。</p>
 
 <h2>我們不做的事</h2>
 <ul>
@@ -35,14 +34,14 @@ footer{margin-top:36px;font-size:14px}
 <ul>
 <li>在 App 裡打開該筆筆記，按「刪除」。</li>
 <li>從主畫面移除這個 App，並清除瀏覽器裡這個網站的資料。手機會一併清掉 IndexedDB 裡的筆記、錄音和軌跡。</li>
-<li>已經上傳的檔案在你自己的 Google Drive。請到雲端硬碟刪除「記錄高高手收件匣」裡的檔案。這個 App 不會代為刪除雲端檔案。</li>
+<li>用「儲存到檔案」存出去的 zip 在「檔案」App 裡，請自行刪除。</li>
 </ul>
 
 <h2>聯絡</h2>
 <p>Chun-I Chen · <a href="mailto:chunichen27@gmail.com">chunichen27@gmail.com</a></p>
 
 <h2>English</h2>
-<p>Offline Notes is a personal app by Chun-I Chen. Photos, audio, transcripts, and GPS tracks stay on the device in IndexedDB. Speech recognition runs on the device. Nothing is sent to a server unless you tap 「☁️ 送到記錄高高手」, which uploads a zip to your own Google Drive using only the <code>drive.file</code> scope. The app can see only files it creates. There are no analytics, no ads, and no sharing with third parties. Delete a note in the app, remove the home-screen icon and this site’s data, and delete any Drive files yourself. Contact <a href="mailto:chunichen27@gmail.com">chunichen27@gmail.com</a>.</p>
+<p>Offline Notes is a personal app by Chun-I Chen. Photos, audio, transcripts, and GPS tracks stay on the device in IndexedDB. Speech recognition runs on the device. Nothing is uploaded anywhere. A zip leaves the device only when you save or share it yourself. There are no analytics, no ads, and no sharing with third parties. Delete a note in the app, remove the home-screen icon and this site’s data, and delete any zip you saved in Files. Contact <a href="mailto:chunichen27@gmail.com">chunichen27@gmail.com</a>.</p>
 
 <footer><a href="index.html">回到離線筆記</a> · <a href="terms.html">使用條款</a></footer>
 </body></html>

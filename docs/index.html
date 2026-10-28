@@ -20,8 +20,8 @@ textarea{min-height:80px}small,.hint{color:#666}
 .folder-row{border-top:1px solid #eee;padding:8px 0}
 .fname{font-weight:600;margin-bottom:4px}
 label.field{display:block;margin-top:8px;color:#333}
-#startTrack,#stopTrack,#sendDay{min-height:48px;font-size:18px}
-#sendDay{display:block;width:100%;margin-top:8px}
+#startTrack,#stopTrack,#saveZip{min-height:48px;font-size:18px}
+#saveZip{display:block;width:100%;margin-top:8px;background:#9d1e19}
 #recthumb{display:block;width:96px;height:96px;object-fit:cover;border-radius:12px;margin:0 auto 8px;background:#eee}
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);box-shadow:0 -2px 12px rgba(0,0,0,.12)}
 .dock-inner{max-width:640px;margin:auto}
@@ -37,12 +37,13 @@ label.field{display:block;margin-top:8px;color:#333}
 <div class="card">
   <div>目前資料夾</div>
   <div id="activeName" class="active-name">未分類</div>
-  <div class="hint">先選這一天或這一趟，開始記錄軌跡。下方可拍照，或只按錄音筆記。一天結束再停止軌跡、送到記錄高高手。</div>
+  <div class="hint">先選這一天或這一趟，開始記錄軌跡。下方可拍照，或只按錄音筆記。一天結束再停止軌跡、存成 zip。</div>
   <div id="trackbox">
     <div id="trackstat" class="track-live"></div>
     <button type="button" id="startTrack">開始記錄軌跡</button>
     <button type="button" id="stopTrack" hidden>停止記錄軌跡</button>
-    <button type="button" id="sendDay">☁️ 送到記錄高高手</button>
+    <button type="button" id="saveZip">💾 存成 zip</button>
+    <p class="hint" id="ziphint">在分享選單選「儲存到檔案」，建議存在「我的 iPhone」裡的同一個資料夾.</p>
     <div id="trackresume" hidden></div>
     <p class="hint" id="tracknote">iPhone 打開相機或鎖定螢幕時會暫停定位。回到這個畫面會自動繼續記。請不要鎖定螢幕。</p>
     <div id="tracklist"></div>
@@ -51,17 +52,10 @@ label.field{display:block;margin-top:8px;color:#333}
   <label class="field">新資料夾名稱<input id="folderName" autocomplete="off"></label>
   <button type="button" id="createFolder">建立並使用</button>
   <div id="folders"></div>
-  <small id="upstat"></small>
 </div>
 <h3>此資料夾的筆記</h3>
 <div id="list"></div>
 <div id="model" class="card"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button type="button" id="dl">下載模型（約 80 MB，僅需一次）</button></div>
-<div class="card">
-  <b>Google Drive</b>
-  <div class="hint">上傳需要網路。Client ID 存在這台手機，不會連同筆記送出。</div>
-  <label class="field">OAuth Client ID<input id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com"></label>
-  <button type="button" id="saveClient" class="sec">儲存 Client ID</button>
-</div>
 <p id="appver" class="ver"></p>
 <p class="ver legal"><a href="privacy.html">隱私權</a> · <a href="terms.html">使用條款</a></p>
 <button type="button" id="updatebanner" hidden>有新版，點此更新</button>
@@ -77,7 +71,6 @@ label.field{display:block;margin-top:8px;color:#333}
   <div id="capmsg" class="hint"></div>
 </div></div>
 <script src="version.js"></script>
-<script src="config.js"></script>
 <script src="vendor/cn2t.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script src="app.js"></script>
