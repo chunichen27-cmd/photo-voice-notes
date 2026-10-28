@@ -1,8 +1,6 @@
 const $=s=>document.querySelector(s);
 const toTW=OpenCC.Converter({from:'cn',to:'tw'});
 const DEFAULT_FOLDER='uncat';
-const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
-const INBOX_NAME='記錄高高手收件匣';
 let updating=false;
 function offerUpdate(worker){
   const b=$('#updatebanner');
@@ -140,12 +138,12 @@ const transcribing=new Set();
 let rec=null,recNoteId=null;
 w.onmessage=e=>{const d=e.data;
   if(d.type==='progress'){const p=d.p;if(p.status==='progress'){prog[p.file]=[p.loaded,p.total];let l=0,t=0;for(const k in prog){l+=prog[k][0];t+=prog[k][1];}$('#mstat').textContent=`下載中 ${(l/1e6).toFixed(1)} / ${(t/1e6).toFixed(1)} MB`;}}
-  else if(d.type==='ready'){localStorage.modelReady='1';$('#mstat').textContent='✅ 已就緒（可離線使用）';$('#dl').hidden=true;}
+  else if(d.type==='ready'){localStorage.modelReady='1';$('#mstat').textContent='✅ 已就緒（可離線使用）';$('#dl').hidden=true;if($('#model'))$('#model').hidden=true;}
   else if(pend[d.id]){pend[d.id](d);delete pend[d.id];}
-  else if(d.type==='error'){$('#mstat').textContent='❌ 載入失敗：'+d.msg;}
+  else if(d.type==='error'){if($('#model'))$('#model').hidden=false;$('#mstat').textContent='❌ 載入失敗：'+d.msg;}
 };
 $('#mstat').textContent=localStorage.modelReady?'載入中…':'尚未下載';
-if(localStorage.modelReady){$('#dl').hidden=true;w.postMessage({type:'load'});}
+if(localStorage.modelReady){$('#dl').hidden=true;if($('#model'))$('#model').hidden=true;w.postMessage({type:'load'});}
 $('#dl').onclick=()=>{$('#mstat').textContent='開始下載…';w.postMessage({type:'load'});};
 
 async function decode16k(blob){const buf=await blob.arrayBuffer();const AC=window.AudioContext||window.webkitAudioContext;const ac=new AC();
@@ -426,7 +424,18 @@ function folderTxt(folder,notes){
   return `資料夾：${folder.name}\n\n${body}`;
 }
 function save(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
-async function share(blob,name){const file=new File([blob],name,{type:blob.type||'application/octet-stream'});if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file]});return;}catch(x){if(x.name==='AbortError')return;}}save(blob,name);}
+async function share(blob,name){
+  const type=blob.type||(String(name).toLowerCase().endsWith('.zip')?'application/zip':'application/octet-stream');
+  const file=new File([blob],name,{type});
+  const payload={files:[file]};
+  try{
+    if(navigator.canShare&&navigator.canShare(payload)){
+      try{await navigator.share(payload);return;}
+      catch(x){if(x.name==='AbortError')return;}
+    }
+  }catch(e){}
+  save(blob,name);
+}
 function ext(b){
   const part=((b&&b.type)||'').split('/')[1]||'bin';
   return part.split(';')[0].replace('jpeg','jpg').replace('x-m4a','m4a')||'bin';
@@ -476,7 +485,9 @@ async function exportFolderTxt(folder){
 }
 async function exportFolderZip(folder){
   const notes=await notesIn(folder.id);
-  await share(await buildFolderZip(folder,notes),zipBaseName(folder,notes));
+  const raw=await buildFolderZip(folder,notes);
+  const blob=raw&&raw.type==='application/zip'?raw:new Blob([raw],{type:'application/zip'});
+  await share(blob,zipBaseName(folder,notes));
 }
 async function addGpxFile(folderId, file){
   let name=safeFileName(file.name||'track.gpx');
@@ -508,12 +519,14 @@ async function activeFolder(){
   const folders=await allFolders();
   return folders.find(f=>f.id===localStorage.activeFolder)||folders.find(f=>f.id===DEFAULT_FOLDER)||folders[0];
 }
+let viewFolderId=null;
 async function createFolder(name){
   name=String(name||'').trim();
   if(!name) throw new Error('請輸入資料夾名稱');
   const folder={id:'f'+Date.now(),name,created:Date.now()};
   await putFolder(folder);
   localStorage.activeFolder=folder.id;
+  viewFolderId=folder.id;
   await render();
   return folder;
 }
@@ -526,7 +539,7 @@ async function renameFolder(id,name){
   await putFolder(f);
   await render();
 }
-async function useFolder(id){localStorage.activeFolder=id;await render();}
+async function useFolder(id){localStorage.activeFolder=id;viewFolderId=id;await render();}
 
 let micStream=null;
 let micWarm=null;
@@ -612,6 +625,7 @@ function paintDock(){
   if(speak) speak.hidden=!fallback;
   if(shoot) shoot.hidden=recording||fallback;
   if(vnote) vnote.hidden=recording||fallback;
+  const save=$('#saveZip'); if(save) save.hidden=recording||fallback;
 }
 function freshTrackFix(){
   if(!activeTrackId||!lastPoint) return null;
@@ -657,191 +671,12 @@ async function startVoiceNote(locPromise){
   }
   await render();
   const card=document.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
-  if(card) card.scrollIntoView({block:'nearest'});
+  const page=$('#folderPage');
+  if(card&&page&&!page.hidden) card.scrollIntoView({block:'nearest'});
   paintDock();
 }
 function el(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;}
 function button(cls,text,onclick){const b=el('button',cls,text);b.type='button';b.onclick=onclick;return b;}
-function setUpStatus(t){const n=$('#upstat');if(n)n.textContent=t;}
-
-function clientIdValue(){
-  const saved=(localStorage.gdriveClientId||'').trim();
-  if(saved) return saved;
-  return String((window.APP_CONFIG&&window.APP_CONFIG.GOOGLE_CLIENT_ID)||'').trim();
-}
-function readToken(){
-  try{
-    const saved=JSON.parse(sessionStorage.getItem('driveToken')||'null');
-    if(saved&&saved.access_token&&saved.exp>Date.now()) return saved.access_token;
-  }catch(e){}
-  return null;
-}
-function saveToken(resp){
-  const exp=Date.now()+Math.max(30,(resp.expires_in||3600)-60)*1000;
-  sessionStorage.setItem('driveToken',JSON.stringify({access_token:resp.access_token,exp}));
-}
-function loadGis(){
-  if(window.google&&google.accounts&&google.accounts.oauth2) return Promise.resolve();
-  return new Promise((ok,no)=>{
-    const s=document.createElement('script');
-    s.src='https://accounts.google.com/gsi/client';
-    s.async=true;
-    s.onload=()=>ok();
-    s.onerror=()=>no(new Error('無法載入 Google 登入元件'));
-    document.head.appendChild(s);
-  });
-}
-function requestToken(clientId,prompt){
-  return new Promise((resolve,reject)=>{
-    let settled=false;
-    const done=(fn,v)=>{if(settled)return;settled=true;fn(v);};
-    const client=google.accounts.oauth2.initTokenClient({
-      client_id:clientId,
-      scope:DRIVE_SCOPE,
-      callback:resp=>{
-        if(resp&&resp.access_token) done(resolve,resp);
-        else done(reject,new Error((resp&&resp.error)||'授權失敗'));
-      },
-      error_callback:err=>done(reject,new Error((err&&(err.message||err.type))||'授權失敗'))
-    });
-    client.requestAccessToken({prompt});
-  });
-}
-async function ensureToken(interactive){
-  const cached=readToken();
-  if(cached) return cached;
-  const clientId=clientIdValue();
-  if(!clientId) throw new Error('請先貼上 Google OAuth Client ID 並按儲存');
-  if(!navigator.onLine) throw new Error('目前沒有網路');
-  await loadGis();
-  try{
-    const resp=await requestToken(clientId,'none');
-    saveToken(resp);
-    return resp.access_token;
-  }catch(err){
-    if(!interactive) throw err;
-    const resp=await requestToken(clientId,'');
-    saveToken(resp);
-    return resp.access_token;
-  }
-}
-async function driveJson(url,opts){
-  const r=await fetch(url,opts);
-  if(r.status===401){sessionStorage.removeItem('driveToken');throw new Error('授權已失效，請再點一次');}
-  const data=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error((data.error&&data.error.message)||('HTTP '+r.status));
-  return data;
-}
-function driveQueryEscape(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
-async function rememberInbox(id){await setMeta('driveInbox',{id});return id;}
-async function inboxId(token){
-  const auth={Authorization:'Bearer '+token};
-  const saved=await getMeta('driveInbox');
-  if(saved&&saved.id){
-    const r=await fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(saved.id)+'?fields=id,name,trashed,mimeType',{headers:auth});
-    if(r.ok){
-      const j=await r.json();
-      if(j&&j.id&&!j.trashed&&j.name===INBOX_NAME&&j.mimeType==='application/vnd.google-apps.folder') return j.id;
-    }else if(r.status===401){sessionStorage.removeItem('driveToken');throw new Error('授權已失效，請再點一次');}
-  }
-  const q="mimeType = 'application/vnd.google-apps.folder' and trashed = false and name = '"+INBOX_NAME+"'";
-  const listUrl='https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'files(id,name)',spaces:'drive',pageSize:'10'});
-  const list=await driveJson(listUrl,{headers:auth});
-  if(list.files&&list.files[0]) return rememberInbox(list.files[0].id);
-  const created=await driveJson('https://www.googleapis.com/drive/v3/files',{method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({name:INBOX_NAME,mimeType:'application/vnd.google-apps.folder'})});
-  return rememberInbox(created.id);
-}
-async function nameTaken(token, parent, name){
-  const q="trashed = false and name = '"+driveQueryEscape(name)+"' and '"+driveQueryEscape(parent)+"' in parents";
-  const url='https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'files(id,name)',spaces:'drive',pageSize:'1'});
-  const list=await driveJson(url,{headers:{Authorization:'Bearer '+token}});
-  return !!(list.files&&list.files.length);
-}
-function collisionName(baseName, ts){
-  const stamp=taipeiParts(ts).compact.split('_')[1];
-  return baseName.replace(/\.zip$/i,'_'+stamp+'.zip');
-}
-async function chooseUploadName(token, parent, baseName){
-  if(!(await nameTaken(token, parent, baseName))) return baseName;
-  let name=collisionName(baseName, Date.now());
-  if(!(await nameTaken(token, parent, name))) return name;
-  const stem=name.replace(/\.zip$/i,'');
-  for(let i=2;i<100;i++){
-    const alt=stem+'_'+i+'.zip';
-    if(!(await nameTaken(token, parent, alt))) return alt;
-  }
-  return stem+'_'+Date.now()+'.zip';
-}
-async function sendZip(token,name,blob){
-  const parent=await inboxId(token);
-  const finalName=await chooseUploadName(token, parent, name);
-  const boundary='pvn'+Math.random().toString(16).slice(2);
-  const meta=JSON.stringify({name:finalName,parents:[parent]});
-  const body=new Blob([
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`,
-    `--${boundary}\r\nContent-Type: application/zip\r\n\r\n`,
-    blob,
-    `\r\n--${boundary}--`
-  ]);
-  const sent=await driveJson('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',{
-    method:'POST',
-    headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary},
-    body
-  });
-  return {id:sent.id, name:sent.name||finalName};
-}
-async function uploadFolder(folderId){
-  if(!clientIdValue()){
-    const msg='請先貼上 Google OAuth Client ID 並按儲存';
-    setUpStatus(msg);
-    throw new Error(msg);
-  }
-  const folder=(await allFolders()).find(f=>f.id===folderId);
-  if(!folder) throw new Error('找不到資料夾');
-  const notes=await notesIn(folder.id);
-  const name=zipBaseName(folder,notes);
-  const zipBlob=await buildFolderZip(folder,notes);
-  if(!navigator.onLine){
-    await putOutbox({id:'q'+Date.now()+Math.random().toString(16).slice(2),folderId:folder.id,name,zip:zipBlob,created:Date.now()});
-    setUpStatus('目前沒有網路，已排入待上傳。連線後會自動再試；若需要重新授權，請再點一次。');
-    return {queued:true,name};
-  }
-  setUpStatus('上傳中…');
-  const token=await ensureToken(true);
-  const sent=await sendZip(token,name,zipBlob);
-  setUpStatus('已送到「'+INBOX_NAME+'」：'+sent.name);
-  return {ok:true,name:sent.name};
-}
-const uploading=new Set();
-async function onUpload(id){
-  if(uploading.has(id)) return;
-  uploading.add(id);
-  try{await uploadFolder(id);}
-  catch(err){
-    const cur=$('#upstat')?$('#upstat').textContent:'';
-    if(!cur.includes(err.message)) setUpStatus('上傳失敗：'+err.message);
-  }finally{uploading.delete(id);}
-}
-async function flushOutbox(){
-  if(!navigator.onLine) return;
-  const items=await allOutbox();
-  if(!items.length) return;
-  if(!clientIdValue()){setUpStatus('有待上傳的檔案。請先貼上 Google OAuth Client ID 再點一次。');return;}
-  let token;
-  try{token=await ensureToken(false);}
-  catch(e){setUpStatus('已恢復網路。請再點「☁️ 送到記錄高高手」完成上傳。');return;}
-  for(const item of items){
-    try{
-      const sent=await sendZip(token,item.name,item.zip);
-      await delOutbox(item.id);
-      setUpStatus('已送到「'+INBOX_NAME+'」：'+sent.name);
-    }catch(err){
-      setUpStatus('上傳失敗：'+err.message);
-      return;
-    }
-  }
-}
-
 const ACC_MAX=50;
 const DUP_M=2;
 let watchId=null;
@@ -898,7 +733,7 @@ function setTrackMsg(t){const n=$('#trackmsg');if(n) n.textContent=t||'';}
 function paintLive(){
   const n=$('#trackstat');
   if(!n) return;
-  if(!activeTrackId){n.textContent='';return;}
+  if(!activeTrackId){n.textContent='尚未記錄軌跡';return;}
   const elapsed=fmtDur(Date.now()-liveStarted);
   const dist=fmtDist(liveDistance);
   n.textContent=`錄製中　已經 ${elapsed}　${liveCount} 點　${dist}`;
@@ -1095,7 +930,9 @@ async function render(){
   for(const f of folders){
     const row=el('div','folder-row');
     row.dataset.folder=f.id;
-    row.append(el('div','fname',(active&&f.id===active.id?'● ':'')+f.name));
+    const nameEl=el('div','fname',(active&&f.id===active.id?'● ':'')+f.name);
+    nameEl.onclick=()=>useFolder(f.id);
+    row.append(nameEl);
     const tracks=gpxAll.filter(g=>g.folderId===f.id);
     if(tracks.length) row.append(el('small','gpxnames','GPX：'+tracks.map(g=>g.name).join('、')));
     if(!active||f.id!==active.id) row.append(button('sec use','使用',()=>useFolder(f.id)));
@@ -1120,12 +957,15 @@ async function render(){
     };
     row.append(gpxInput);
     row.append(button('sec gpxb','加入 GPX',()=>gpxInput.click()));
-    row.append(button('drive','☁️ 送到記錄高高手',()=>onUpload(f.id)));
     box.append(row);
   }
   await paintTrackPanel();
   paintDock();
-  const notes=active?(await notesIn(active.id)).sort((a,b)=>b.ts-a.ts):[];
+  const shownId=viewFolderId||(active&&active.id);
+  const shown=folders.find(f=>f.id===shownId)||active;
+  const title=$('#folderDetailTitle');
+  if(title) title.textContent=(shown?shown.name:'未分類')+'的筆記';
+  const notes=shown?(await notesIn(shown.id)).sort((a,b)=>b.ts-a.ts):[];
   const L=$('#list');
   L.replaceChildren();
     if(!notes.length){L.append(el('p','empty','此資料夾還沒有筆記。'));paintDock();return;}
@@ -1179,29 +1019,19 @@ async function render(){
   paintDock();
 }
 
-window.pvn={allNotes,allFolders,allOutbox,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,uploadFolder,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,getMeta,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,compressPhoto,readExifOrientation,releaseMic,freshTrackFix,askNoteLoc,flushFixes:()=>pointChain};
+window.pvn={allNotes,allFolders,allTracks,pointsIn,migrate,activeFolder,createFolder,buildFolderZip,folderTxt,exportFolderZip,attachRecording,doTranscribe,notesIn,delNote,putNote,zipFileName,zipBaseName,fname,planFiles,addGpxFile,gpxIn,startTrack,resumeTrack,finishTrack,acceptFix,gpxText,trackGpxName,haversine,pathDistance,onVisible,compressPhoto,readExifOrientation,releaseMic,freshTrackFix,askNoteLoc,flushFixes:()=>pointChain,showHome,showFolders};
 
-async function saveClient(){
-  const v=$('#clientId').value.trim();
-  if(v) localStorage.gdriveClientId=v;
-  else localStorage.removeItem('gdriveClientId');
-  sessionStorage.removeItem('driveToken');
-  localStorage.removeItem('driveInboxId');
-  await delMeta('driveInbox');
-  setUpStatus(v?'已儲存 Client ID':'已清除 Client ID');
-}
+function showHome(){const home=$('#home'),page=$('#folderPage');if(home)home.hidden=false;if(page)page.hidden=true;}
+function showFolders(){const home=$('#home'),page=$('#folderPage');if(home)home.hidden=true;if(page)page.hidden=false;if(!viewFolderId)viewFolderId=localStorage.activeFolder||DEFAULT_FOLDER;}
 
 (async function init(){
   await migrate();
-  const name=$('#folderName');
-  if(name&&!name.value) name.value=todayTW();
-  const preset=localStorage.gdriveClientId||(window.APP_CONFIG&&window.APP_CONFIG.GOOGLE_CLIENT_ID)||'';
-  if($('#clientId')) $('#clientId').value=preset;
   $('#createFolder').onclick=async()=>{try{await createFolder($('#folderName').value);}catch(err){alert(err.message);}};
-  $('#saveClient').onclick=saveClient;
+  if($('#openFolders')) $('#openFolders').onclick=async()=>{showFolders();await render();};
+  if($('#backHome')) $('#backHome').onclick=()=>showHome();
+  if($('#saveZip')) $('#saveZip').onclick=()=>activeFolder().then(exportFolderZip).catch(err=>alert(err.message));
   if($('#startTrack')) $('#startTrack').onclick=()=>startTrack().catch(err=>setTrackMsg(err.message));
   if($('#stopTrack')) $('#stopTrack').onclick=()=>finishTrack().catch(err=>setTrackMsg(err.message));
-  if($('#sendDay')) $('#sendDay').onclick=()=>onUpload(localStorage.activeFolder||DEFAULT_FOLDER);
   if($('#shoot')) $('#shoot').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
   if($('#vnote')){
     $('#vnote').addEventListener('pointerdown',()=>{unlockAudio();void armMic().catch(()=>{});});
@@ -1228,7 +1058,5 @@ async function saveClient(){
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') onVisible();});
   window.addEventListener('pageshow',()=>onVisible());
   setInterval(()=>{if(activeTrackId) paintLive();},1000);
-  window.addEventListener('online',()=>{flushOutbox();});
   await render();
-  if(navigator.onLine) flushOutbox();
 })();

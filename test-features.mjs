@@ -15,46 +15,13 @@ p.on('pageerror', e => errors.push(e.message));
 p.on('console', m => { if (m.type() === 'error') console.log('console:', m.text()); });
 p.setDefaultTimeout(30000);
 
-const uploads = [];
-const apiPosts = [];
-const takenNames = new Set();
-await p.route('https://www.googleapis.com/**', async route => {
-  const req = route.request();
+const googleHits = [];
+p.on('request', req => {
   const url = req.url();
-  const method = req.method();
-  const auth = req.headers()['authorization'] || '';
-  if (!auth.includes('test-token')) fail('missing bearer on ' + method + ' ' + url);
-  if (method !== 'GET' && method !== 'POST') fail('must not ' + method + ' ' + url);
-  if (url.includes('/upload/drive/')) {
-    const buf = req.postDataBuffer();
-    uploads.push(buf);
-    const sent = (buf.toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1];
-    if (sent) takenNames.add(sent);
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'file' + uploads.length, name: sent || 'ok.zip'})});
-    return;
-  }
-  if (method === 'POST') {
-    apiPosts.push(req.postData() || '');
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'inbox1', name: '記錄高高手收件匣'})});
-    return;
-  }
-  if (method === 'GET' && url.includes('/drive/v3/files?')) {
-    const q = decodeURIComponent(url.replace(/\+/g, ' '));
-    const wanted = (q.match(/name = '((?:\\'|[^'])*)'/) || [])[1];
-    if (q.includes('in parents') && wanted && takenNames.has(wanted.replace(/\\'/g, "'"))) {
-      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({files: [{id: 'oldzip', name: wanted}]})});
-      return;
-    }
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({files: []})});
-    return;
-  }
-  if (method === 'GET' && url.includes('/drive/v3/files/inbox1')) {
-    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({id: 'inbox1', name: '記錄高高手收件匣', trashed: false, mimeType: 'application/vnd.google-apps.folder'})});
-    return;
-  }
-  await route.fulfill({status: 500, contentType: 'application/json', body: JSON.stringify({error: {message: 'unexpected ' + method + ' ' + url}})});
+  if (/accounts\.google\.com|googleapis\.com|gsi\/client/i.test(url)) googleHits.push(url);
 });
 
+await p.setViewportSize({width: 390, height: 844});
 await p.goto(base);
 await p.waitForFunction(() => document.querySelector('#activeName')?.textContent === '未分類');
 const paths = await p.evaluate(async () => {
@@ -76,7 +43,7 @@ const footer = await p.evaluate(() => ({
   terms: document.querySelector('a[href="terms.html"]')?.textContent || ''
 }));
 if (!footer.privacy.includes('隱私') || !footer.terms.includes('使用條款')) fail('footer links ' + JSON.stringify(footer));
-for (const name of ['version.js', 'config.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
+for (const name of ['version.js', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png', 'favicon.ico', 'favicon-32.png']) {
   if (!paths.urls.some(u => u.endsWith('/' + name))) fail(name + ' not precached');
 }
 const manifest = await (await fetch(new URL('manifest.webmanifest', base))).json();
@@ -92,8 +59,42 @@ if (await p.locator('#updatebanner').innerText() !== '有新版，點此更新')
 await p.click('#updatebanner');
 if ((await p.evaluate(() => window.__updateMsg && window.__updateMsg.type)) !== 'skip-waiting') fail('banner did not activate the waiting worker');
 
-const today = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date());
-if (await p.inputValue('#folderName') !== today) fail('default folder name ' + await p.inputValue('#folderName'));
+const shown = await p.evaluate(() => {
+  const visible = sel => {
+    let n = document.querySelector(sel);
+    while (n) {
+      if (n.hidden) return false;
+      const s = getComputedStyle(n);
+      if (s.display === 'none' || s.visibility === 'hidden') return false;
+      n = n.parentElement;
+    }
+    return !!document.querySelector(sel);
+  };
+  const scroller = document.scrollingElement;
+  return {
+    scroll: scroller.scrollHeight - scroller.clientHeight,
+    overflow: getComputedStyle(document.body).overflow,
+    home: visible('#home'),
+    folder: visible('#folderPage'),
+    list: visible('#list'),
+    folders: visible('#folders'),
+    client: !!document.querySelector('#clientId'),
+    shoot: visible('#shoot'),
+    vnote: visible('#vnote'),
+    zip: visible('#saveZip'),
+    start: visible('#startTrack'),
+    zipText: document.querySelector('#saveZip')?.textContent || ''
+  };
+});
+if (shown.scroll > 1) fail('main screen scrolls ' + shown.scroll);
+if (shown.overflow !== 'hidden') fail('body overflow ' + shown.overflow);
+if (!shown.home || shown.folder || shown.list || shown.folders || shown.client) fail('main shows the wrong pieces ' + JSON.stringify(shown));
+if (!shown.shoot || !shown.vnote || !shown.zip || !shown.start) fail('main missing controls ' + JSON.stringify(shown));
+if (shown.zipText !== '💾 匯出 zip') fail('zip label ' + shown.zipText);
+await p.evaluate(() => { const b = document.querySelector('#updatebanner'); if (b) b.hidden = true; });
+await p.screenshot({path: '/opt/cursor/artifacts/main_screen_idle.png'});
+if (await p.inputValue('#folderName') !== '') fail('folder name should start empty, got ' + await p.inputValue('#folderName'));
+await p.click('#openFolders');
 
 const migrated = await p.evaluate(async () => {
   const audio = () => new Blob(['keep-me'], {type: 'audio/webm'});
@@ -271,90 +272,58 @@ const auto = await p.evaluate(async id => {
 console.log('auto', auto.transcript, auto.status);
 if (auto.hasAudio || !auto.transcript.includes('自動轉好的句子') || !auto.status.includes('已刪除錄音')) fail('auto transcribe failed');
 
-const defaultClient = '551882248016-1vdbcpur7tluueq3gnpqfmb7nlntm6i9.apps.googleusercontent.com';
-if (await p.inputValue('#clientId') !== defaultClient) fail('default client id not shown');
-await p.evaluate(() => { window.__savedClient = window.APP_CONFIG.GOOGLE_CLIENT_ID; window.APP_CONFIG.GOOGLE_CLIENT_ID = ''; });
-await p.click('[data-folder="uncat"] button.drive');
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('請先貼上 Google OAuth Client ID'));
-await p.evaluate(() => { window.APP_CONFIG.GOOGLE_CLIENT_ID = window.__savedClient; localStorage.removeItem('gdriveClientId'); });
-await p.evaluate(() => {
-  window.__seenClients = [];
-  window.google = {accounts: {oauth2: {initTokenClient(cfg) {
-    window.__seenClients.push(cfg.client_id);
-    return {requestAccessToken(){ cfg.callback({error: 'interaction_required'}); }};
-  }}}};
-});
-await p.click(`[data-folder="${folderId}"] button.drive`);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('interaction_required'));
-const usedDefault = await p.evaluate(() => window.__seenClients.slice());
-if (usedDefault[0] !== defaultClient) fail('default client not used ' + usedDefault.join(','));
-await p.fill('#clientId', '123456-abc.apps.googleusercontent.com');
-await p.click('#saveClient');
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已儲存 Client ID'));
-await p.evaluate(() => {
-  window.__tokenPrompts = [];
-  window.__scopes = [];
-  window.__clientIds = [];
-  window.__allowSilent = false;
-  window.google = {accounts: {oauth2: {initTokenClient(cfg) {
-    window.__scopes.push(cfg.scope);
-    window.__clientIds.push(cfg.client_id);
-    return {requestAccessToken(opts) {
-      const prompt = opts ? opts.prompt : '';
-      window.__tokenPrompts.push(prompt);
-      if (prompt === 'none' && !window.__allowSilent) { cfg.callback({error: 'interaction_required'}); return; }
-      cfg.callback({access_token: 'test-token', expires_in: 3600});
-    }};
-  }}}};
-});
-await p.click(`[data-folder="${folderId}"] button.drive`);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已送到「記錄高高手收件匣」'));
-const firstAuth = await p.evaluate(() => ({prompts: window.__tokenPrompts.slice(), scopes: window.__scopes.slice(), ids: window.__clientIds.slice()}));
-console.log('auth', JSON.stringify(firstAuth), 'uploads', uploads.length, 'posts', apiPosts);
-if (JSON.stringify(firstAuth.prompts) !== JSON.stringify(['none', ''])) fail('token prompts ' + firstAuth.prompts.join(','));
-if (firstAuth.scopes[0] !== 'https://www.googleapis.com/auth/drive.file') fail('scope ' + firstAuth.scopes[0]);
-if (firstAuth.ids[0] !== '123456-abc.apps.googleusercontent.com') fail('client id not passed');
-if (!apiPosts.some(body => body.includes('記錄高高手收件匣'))) fail('inbox was not created');
-const created = apiPosts.map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).find(j => j && j.name === '記錄高高手收件匣');
-if (!created || created.mimeType !== 'application/vnd.google-apps.folder' || Object.prototype.hasOwnProperty.call(created, 'parents')) fail('inbox create ' + apiPosts[0]);
-const inboxMeta = await p.evaluate(async () => pvn.getMeta('driveInbox'));
-if (!inboxMeta || inboxMeta.id !== 'inbox1') fail('inbox id not stored ' + JSON.stringify(inboxMeta));
-const body = uploads[0];
-const firstName = body ? (body.toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1] : '';
-if (!body || !/^\d{8}_新店溪散步\.zip$/.test(firstName) || !body.includes(Buffer.from('inbox1'))) fail('upload metadata ' + firstName);
-if (!body.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) fail('upload is not a zip');
-
-await p.evaluate(() => { document.querySelector('#upstat').textContent = ''; });
-await p.click(`[data-folder="${folderId}"] button.drive`);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已送到「記錄高高手收件匣」'));
-const reused = await p.evaluate(() => window.__tokenPrompts.length);
-const secondName = (uploads[1].toString('utf8').match(/"name":"([^"]+\.zip)"/) || [])[1] || '';
-console.log('second upload', secondName);
-if (reused !== 2 || uploads.length !== 2) fail('token was not reused, prompts ' + reused + ' uploads ' + uploads.length);
-if (!/^\d{8}_新店溪散步_\d{6}\.zip$/.test(secondName)) fail('collision name ' + secondName);
-
-await p.evaluate(() => { sessionStorage.removeItem('driveToken'); window.__allowSilent = true; document.querySelector('#upstat').textContent = ''; });
-await p.click(`[data-folder="${folderId}"] button.drive`);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已送到「記錄高高手收件匣」') && window.__tokenPrompts.length === 3 && window.__tokenPrompts[2] === 'none');
-if (uploads.length !== 3) fail('silent reauth did not upload');
-console.log('silent reauth ok');
-
-const beforeOffline = await p.evaluate(() => window.__tokenPrompts.length);
+await p.locator('#list .card').first().scrollIntoViewIfNeeded();
+await p.screenshot({path: '/opt/cursor/artifacts/folder_page_notes.png'});
+await p.click('#backHome');
+const homeText = await p.locator('#home').innerText();
+if (homeText.includes('這是測試') || homeText.includes('匯出 .zip') || homeText.includes('OAuth')) fail('main screen lists notes or drive: ' + homeText.slice(0, 180));
+if ((await p.locator('#openFiles').getAttribute('href')) !== 'shareddocuments://') fail('files url');
+const beforeNotes = await p.evaluate(async () => (await pvn.allNotes()).length);
 await ctx.setOffline(true);
-await p.click(`[data-folder="${folderId}"] button.drive`);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('目前沒有網路'));
-const queued = await p.evaluate(async () => (await pvn.allOutbox()).map(i => ({name: i.name, size: i.zip.size})));
-console.log('queued', JSON.stringify(queued));
-if (queued.length !== 1 || queued[0].size < 20 || !/^\d{8}_新店溪散步\.zip$/.test(queued[0].name)) fail('offline queue ' + JSON.stringify(queued));
-if (await p.evaluate(() => window.__tokenPrompts.length) !== beforeOffline) fail('offline upload tried to auth');
-
+const beforeGoogle = googleHits.length;
+const zipSaved = await p.evaluate(async () => {
+  window.__fetches = 0;
+  const orig = window.fetch;
+  window.fetch = (...args) => { window.__fetches++; return orig(...args); };
+  const share = async payload => {
+    const file = payload.files[0];
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const z = await JSZip.loadAsync(file);
+    window.__shared = {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      head: [...buf.slice(0, 4)],
+      names: Object.keys(z.files),
+      txt: await z.file('筆記.txt').async('string')
+    };
+  };
+  Object.defineProperty(navigator, 'canShare', {configurable: true, value: data => !!(data && data.files && data.files.length)});
+  Object.defineProperty(navigator, 'share', {configurable: true, value: share});
+  document.querySelector('#saveZip').click();
+  for (let i = 0; i < 50 && !window.__shared; i++) await new Promise(ok => setTimeout(ok, 50));
+  return {shared: window.__shared, fetches: window.__fetches};
+});
+console.log('offline zip', zipSaved.shared && zipSaved.shared.name);
+if (!zipSaved.shared) fail('share was not called');
+if (!/^\d{8}_新店溪散步\.zip$/.test(zipSaved.shared.name) || zipSaved.shared.type !== 'application/zip') fail('zip file ' + zipSaved.shared.name + ' ' + zipSaved.shared.type);
+if (zipSaved.shared.head.join(',') !== '80,75,3,4') fail('zip header');
+if (!zipSaved.shared.txt.includes('資料夾：新店溪散步') || !zipSaved.shared.txt.includes('逐字稿：')) fail('zip txt');
+if (!zipSaved.shared.names.some(n => /^\d{8}_\d{6}(_\d+)?_照片\.jpg$/.test(n)) || !zipSaved.shared.names.includes('打鐵寮.gpx')) fail('zip contents ' + zipSaved.shared.names.join(','));
+if (zipSaved.fetches !== 0) fail('export used the network');
+if (googleHits.length !== beforeGoogle) fail('google request during export');
+const afterNotes = await p.evaluate(async () => (await pvn.allNotes()).length);
+if (afterNotes !== beforeNotes) fail('export deleted notes ' + beforeNotes + ' -> ' + afterNotes);
+await p.evaluate(() => { delete navigator.canShare; delete navigator.share; });
+const [zipDownload] = await Promise.all([
+  p.waitForEvent('download'),
+  p.evaluate(() => document.querySelector('#saveZip').click())
+]);
+if (!/^\d{8}_新店溪散步\.zip$/.test(zipDownload.suggestedFilename())) fail('download name ' + zipDownload.suggestedFilename());
+const zipBytes = await readFile(await zipDownload.path());
+if (zipBytes[0] !== 0x50 || zipBytes[1] !== 0x4b) fail('downloaded file is not a zip');
+console.log('offline zip download', zipDownload.suggestedFilename());
 await ctx.setOffline(false);
-await p.waitForFunction(() => document.querySelector('#upstat').textContent.includes('已送到「記錄高高手收件匣」'), null, {timeout: 15000});
-const left = await p.evaluate(async () => (await pvn.allOutbox()).length);
-if (left !== 0 || uploads.length !== 4) fail('queued upload did not flush, left ' + left + ' uploads ' + uploads.length);
-const queuedBody = uploads[3];
-if (!queuedBody.includes(Buffer.from('新店溪散步')) || !queuedBody.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) fail('flushed body is not the queued zip');
-console.log('offline flush ok');
 
 const shapedTrack = await p.evaluate(() => {
   const started = Date.parse('2026-10-26T04:37:05Z');
@@ -466,10 +435,12 @@ if (saved.n !== 1 || saved.points !== 3 || !/^\d{8}_\d{6}_軌跡\.gpx$/.test(sav
 await p.evaluate(() => {
   try { Object.defineProperty(Navigator.prototype, 'canShare', {configurable: true, value: () => false}); } catch (e) {}
 });
+await p.click('#openFolders');
 const [gpxDownload] = await Promise.all([
   p.waitForEvent('download'),
   p.click('#tracklist button.gpxout')
 ]);
+await p.click('#backHome');
 const gpxBody = await readFile(await gpxDownload.path(), 'utf8');
 if (gpxDownload.suggestedFilename() !== saved.name) fail('download ' + gpxDownload.suggestedFilename());
 if (!gpxBody.includes('<trkseg>') || (gpxBody.match(/<trkpt /g) || []).length !== 3 || !gpxBody.includes('<time>') || !gpxBody.includes('Z</time>')) fail('downloaded gpx ' + gpxBody.slice(0, 240));
@@ -696,13 +667,14 @@ const geoOpts = await p.evaluate(() => window.__lastGeoOpts);
 if (await p.evaluate(() => window.__geoCurrent) !== 1 || !geoOpts || geoOpts.enableHighAccuracy !== true || geoOpts.timeout !== 15000) fail('one-off geo ' + JSON.stringify(geoOpts));
 console.log('voice notes ok');
 
-await p.locator('a[href="privacy.html"]').evaluate(a => a.scrollIntoView({block:'center'}));
+await p.click('#openFolders');
 await p.locator('a[href="privacy.html"]').click();
 await p.waitForFunction(() => document.querySelector('h1')?.textContent === '隱私權政策');
 const privacyText = await p.locator('body').innerText();
-for (const bit of ['Chun-I Chen', 'IndexedDB', 'drive.file', '送到記錄高高手', 'chunichen27@gmail.com', '沒有廣告']) {
+for (const bit of ['Chun-I Chen', 'IndexedDB', '不會上傳', 'chunichen27@gmail.com', '沒有廣告']) {
   if (!privacyText.includes(bit)) fail('privacy missing ' + bit);
 }
+if (privacyText.includes('drive.file') || privacyText.includes('送到記錄高高手')) fail('privacy still mentions drive');
 const privacyH2 = await p.locator('h2').first().evaluate(el => getComputedStyle(el).color);
 if (privacyH2 !== 'rgb(157, 30, 25)') fail('privacy color ' + privacyH2);
 await p.locator('a[href="terms.html"]').click();

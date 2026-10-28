@@ -4,7 +4,7 @@ Static site in `docs/` (no build step). GitHub Pages serves that folder at <http
 
 `docs/.nojekyll` is required. Without it, Pages runs Jekyll, and Jekyll does not publish the `vendor/` directory (the on-device transcription runtime, including the ONNX wasm).
 
-Local test: put a short `sample.wav` in `docs/`, then `cd docs && python3 -m http.server 8765` and, from the repo root, `node test.mjs` (headless Chrome, online and offline transcription). `node test-features.mjs` checks folders, export text, audio deletion, and a mocked Drive upload without downloading the model. To mimic the project-site subpath, serve a parent folder that contains `photo-voice-notes` pointing at `docs/`, and set `BASE_URL=http://localhost:8765/photo-voice-notes/`.
+Local test: put a short `sample.wav` in `docs/`, then `cd docs && python3 -m http.server 8765` and, from the repo root, `node test.mjs` (headless Chrome, online and offline transcription). `node test-features.mjs` checks folders, export text, audio deletion, and an offline zip export without downloading the model. To mimic the project-site subpath, serve a parent folder that contains `photo-voice-notes` pointing at `docs/`, and set `BASE_URL=http://localhost:8765/photo-voice-notes/`.
 
 Model: Xenova/whisper-base (q8, ~80 MB) downloaded from huggingface.co on first tap, cached in Cache Storage "transformers-cache".
 
@@ -45,12 +45,12 @@ Pages source, after this is on `main`: Settings → Pages → Build and deployme
 1. 在「新資料夾名稱」會先帶入今天的日期（台北時間），可以改成例如「2026-10-26 新店山路」。
 2. 點「建立並使用」。上方「目前資料夾」會顯示這個名稱。
 3. 之後新的照片、錄音、逐字稿和定位都會進這個資料夾，直到你改用別的資料夾。
-4. 舊筆記會放在「未分類」。可以點「使用」切換，或點「重新命名」。
-5. 若這趟已有 GPX 檔，點該資料夾的「加入 GPX」。匯出或上傳時會以原檔名放進壓縮檔。
+4. 舊筆記會放在「未分類」。在資料夾頁點名稱或「使用」切換，或點「重新命名」。App 不會自動建立今天日期的資料夾。
+5. 若這趟已有 GPX 檔，在資料夾頁點「加入 GPX」。匯出 zip 時會以原檔名放進壓縮檔。
 
 ### 記錄軌跡
 
-在目前資料夾按「開始記錄軌跡」，走完再按「停止記錄軌跡」。畫面會顯示錄製中、已經過的時間、點數和距離。每一個定位點會立刻寫進這台手機，重新載入後可以繼續同一段軌跡。一個資料夾可以有好幾段軌跡，每一段可按「匯出 GPX」。檔名是開始時間（台北時間），例如 `20261026_123705_軌跡.gpx`。送到記錄高高手的壓縮檔也會帶上這些軌跡。
+在目前資料夾按「開始記錄軌跡」，走完再按「停止記錄軌跡」。畫面會顯示錄製中、已經過的時間、點數和距離。每一個定位點會立刻寫進這台手機，重新載入後可以繼續同一段軌跡。一個資料夾可以有好幾段軌跡，每一段可按「匯出 GPX」。檔名是開始時間（台北時間），例如 `20261026_123705_軌跡.gpx`。匯出的 zip 也會帶上這些軌跡。
 
 iPhone 在鎖定螢幕、打開相機或把 App 切到背景時會暫停定位。回到這個畫面會自動繼續同一段軌跡，並重新要螢幕常亮。請不要鎖定螢幕。精確度太差（約超過 50 公尺）或和上一點幾乎重疊的定位會略過。
 
@@ -58,14 +58,14 @@ iPhone 在鎖定螢幕、打開相機或把 App 切到背景時會暫停定位�
 
 一天的操作只有這幾下。模型下載完成後，飛航模式或沒有 Wi-Fi 也可以拍照、錄音、把語音轉成文字。
 
-1. 選好資料夾（某一天或某一趟）。
+1. 右上角資料夾圖示打開資料夾頁，輸入名稱後按「開新資料夾」。主畫面只顯示目前資料夾的名稱。
 2. 按「開始記錄軌跡」。這時會一併詢問麥克風，並把麥克風留著用一整天，避免每張照片都再問一次。軌跡會一直記到你按「停止記錄軌跡」。
 3. 一整天重複：按「📷 拍照」。照片會縮成 JPEG，長邊大約 3000 到 4000 像素、品質約 0.85，必要時再降低直到小於 5 MB，方向會轉正。檔名用的時間是按下快門當下（相機若有帶拍攝時間，兩分鐘內以那個時間為準），不是壓縮完成的時間。
 4. 拍完立刻錄音，不用再按一次。下方出現這張照片的縮圖、大的「停止錄音」和「錄音中」。說完按「停止錄音」。
-5. 若模型已經下載，停止後會自動轉成繁體中文，寫進這張照片的圖說，並刪掉錄音。轉失敗則留下錄音，可再按「📝 轉成文字」。圖說可以事後修改。
+5. 若模型已經下載，停止後會自動轉成繁體中文，寫進這張照片的圖說，並刪掉錄音。轉失敗則留下錄音，可再按「📝 轉成文字」。圖說在資料夾頁可以事後修改。主畫面不列出照片。
 6. 畫面回到拍照，可以拍下一張。軌跡繼續記。
 7. 不想拍照、只想留一句話：按「🎙 錄音筆記」。按下就開始錄，再按「停止錄音」。時間和位置在按下的那一刻記下來。若軌跡正在記、而且最後一個定位點還在 30 秒內，就用那個點；否則另外抓一次定位。抓不到也會先把筆記存好，位置寫成無法取得。
-8. 這一天結束：按「停止記錄軌跡」，再按同一個畫面裡的「☁️ 送到記錄高高手」。
+8. 這一天結束：按「停止記錄軌跡」，再按「💾 匯出 zip」。不需要網路，也不會刪掉手機裡的筆記。分享選單選「儲存到檔案」，之後再自行把 zip 傳給記錄高高手。
 
 語音筆記和照片排在同一份清單，用 🎙 標出來。`筆記.txt` 裡照片筆記仍是 `時間`、`照片`、`逐字稿`、位置、地圖。語音筆記沒有 `照片` 行，改成 `時間`、`類型：語音筆記`、`逐字稿`、位置、地圖。辨識成功後錄音會刪掉，不會放進壓縮檔。
 
@@ -75,7 +75,7 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 
 辨識在這支手機上進行，錄音不會上傳。模型還沒下載時，不會自動轉成文字，請先下載模型，或稍後再按「📝 轉成文字」。
 
-畫面下方有一行版本，例如「版本 v1.3（2026-10-27）」，旁邊有隱私權和使用條款。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。
+主畫面有一行版本，例如「版本 v1.4（2026-10-28）」。這個號碼和離線快取用同一個版本檔，不會各寫各的。手機上若還留著舊程式，會出現「有新版，點此更新」，點下去就換成新的。iPhone 有時要關掉 App 再打開，主畫面捷徑才會吃到新版本。隱私權和使用條款在資料夾頁。
 
 ### 匯出筆記
 
@@ -83,62 +83,8 @@ iPhone 的第一次麥克風權限必須由你按下去觸發，所以是按在�
 - 單筆：在該筆筆記點「匯出 .txt」或「匯出 .zip」。
 - 手機會跳出分享畫面，可以存到「檔案」、用 AirDrop 傳出，或送到訊息、郵件。
 
-### 送到 Google Drive
+### 匯出 zip
 
-每個資料夾有「☁️ 送到記錄高高手」。需要網路。Client ID 已寫在 App 裡，不必再貼。檔案會上傳到你自己的 Google Drive 裡、我的雲端硬碟根目錄的「記錄高高手收件匣」。App 只看得到自己建立的資料夾，會把這個收件匣的 id 記在這台手機，下次找不到才再建立一個。上傳之後 App 不會移動或刪除雲端上的任何檔案。沒有網路時會先排入待上傳，連線後再送；若要重新授權，再點一次按鈕即可。
+主畫面按「💾 匯出 zip」。檔名是 `YYYYMMDD_資料夾名稱.zip`。日期優先用資料夾名稱裡的日期，否則用第一筆筆記的日期（都是台北時間）。內容和資料夾頁的「匯出 .zip」相同，而且不會刪掉筆記。
 
-## 設定 Google Drive 上傳
-
-上傳用的是瀏覽器裡的 Google 登入（Google Identity Services），沒有自己的伺服器。範圍只申請 `drive.file`，App 只能看到它自己建立的檔案。預設 Client ID 在 `docs/config.js` 的 `GOOGLE_CLIENT_ID`，打開就會用。若在 App 的「Google Drive」欄位貼上另一個 ID 並按儲存，存在這台手機的那個值優先；把欄位清掉再儲存，就回到 `config.js` 的預設。
-
-授權的 JavaScript 來源是網址的「協定 + 網域」，**不要**加上 `/photo-voice-notes`：
-
-`https://chunichen27-cmd.github.io`
-
-若 Console 已經改版成「Google Auth platform」，對照最後一節的新名稱即可。
-
-### 1. 建立專案並啟用 Drive API
-
-1. 用要接收檔案的 Gmail 打開 <https://console.cloud.google.com/>。
-2. 上方專案選單 →「新增專案」。名稱可填「離線筆記」，建立後確認目前選到這個專案。
-3. 左側「API 和服務」→「程式庫」（Enabled APIs & services → Library）。
-4. 搜尋「Google Drive API」→ 點進去 →「啟用」。
-
-### 2. OAuth 同意畫面
-
-1. 「API 和服務」→「OAuth 同意畫面」（OAuth consent screen）。
-2. User type 選「外部」（External）→ 建立。
-3. 應用程式名稱填「離線筆記」。使用者支援電子郵件、開發人員聯絡電子郵件都填自己的 Gmail → 儲存並繼續。
-4. 範圍（Scopes）→「新增或移除範圍」。只加入 `https://www.googleapis.com/auth/drive.file`。清單裡沒有就用手動新增。不要加完整的 Drive 範圍。更新 → 儲存並繼續。
-5. 品牌頁要先填隱私權政策與服務條款網址，否則無法發布。隱私權：`https://chunichen27-cmd.github.io/photo-voice-notes/privacy.html`。服務條款：`https://chunichen27-cmd.github.io/photo-voice-notes/terms.html`。這兩頁要等 GitHub Pages 發佈這次更新後才能打開。
-6. 發布狀態改成正式版（In production / 發布應用程式）。`drive.file` 是非敏感範圍，只有這個範圍時不必送 Google 驗證，一般 Google 帳號都能在同意畫面上允許。
-7. 測試模式只允許列在測試使用者裡的帳號。Google 可能不讓專案擁有者的 Gmail 加進測試使用者（顯示不適用）。這種情況不必硬加，直接發布成正式版即可。App 的登入流程不用改。
-
-### 3. 建立網頁用的 OAuth Client ID
-
-1. 「API 和服務」→「憑證」（Credentials）→「建立憑證」→「OAuth 用戶端 ID」。
-2. 應用程式類型選「網頁應用程式」。名稱可填「離線筆記網頁」。
-3. 「已授權的 JavaScript 來源」按新增，填入：`https://chunichen27-cmd.github.io`
-4. 「已授權的重新導向 URI」留空。這個 App 用的是 token 彈出視窗，不需要重新導向網址。
-5. 建立。複製用戶端 ID，結尾是 `.apps.googleusercontent.com`。
-
-在電腦上用 `http://localhost:8765` 試上傳時，要把這個網址也加進 JavaScript 來源。正式用手機打開 GitHub Pages 時，來源仍必須有上面的 `github.io`。
-
-### 4. 上傳
-
-1. 手機用 Chrome 或 Safari 打開 <https://chunichen27-cmd.github.io/photo-voice-notes/>（建議從主畫面圖示進入）。
-2. 「Google Drive」的 Client ID 已帶入 `docs/config.js` 的預設值，不必再貼。只有要改用別的用戶端時，才貼上並按「儲存 Client ID」。
-3. 打開某個資料夾，點「☁️ 送到記錄高高手」。
-4. 第一次會跳出 Google 授權。同意畫面已是正式版時，用自己的 Gmail 登入並允許即可。
-5. 成功時畫面會寫已送到「記錄高高手收件匣」。檔名是 `YYYYMMDD_資料夾名稱.zip`，例如 `20261026_打鐵寮古道.zip`。日期優先用資料夾名稱裡的日期，否則用第一筆筆記的日期（都是台北時間）。收件匣裡已經有同名檔時，會改成加上傳當下的 `_HHMMSS`，例如 `20261026_打鐵寮古道_123705.zip`，不會覆寫。
-6. 之後憑證還有效時，再按一次就會直接上傳，不必再選帳號。憑證過期時，同一下按鈕會安靜換發新憑證；若 Google 要求重新同意，才會再跳出視窗。
-7. 到 Google Drive 的「我的雲端硬碟」查看「記錄高高手收件匣」。接收端會自行把處理過的 zip 移到收件匣裡的「已處理」；這個 App 不會代為移動或刪除。
-
-沒有網路就按上傳時，筆記會先留在手機的待上傳清單，連線後自動再試。若當時需要重新登入，畫面上會請你再點一次。
-
-### 介面若已改成 Google Auth platform
-
-- 品牌（Branding）：應用程式名稱、電子郵件、隱私權政策 `https://chunichen27-cmd.github.io/photo-voice-notes/privacy.html`、服務條款 `https://chunichen27-cmd.github.io/photo-voice-notes/terms.html`。
-- 目標對象（Audience）：外部，並發布為正式版。只有 `drive.file` 時不必驗證。若測試中無法把擁有者的 Gmail 加為測試使用者，改正式版即可。
-- 資料存取（Data Access）：新增範圍 `https://www.googleapis.com/auth/drive.file`。
-- 用戶端（Clients）：建立「網頁應用程式」，JavaScript 來源填 `https://chunichen27-cmd.github.io`。
+iPhone 從主畫面打開時，會跳出系統分享選單。選「儲存到檔案」。資料夾頁的「打開檔案」用 `shareddocuments://` 打開「檔案」App，不能指定你剛存的那個資料夾。電腦沒有分享功能時，瀏覽器會直接下載。不需要網路，也不會登入 Google。

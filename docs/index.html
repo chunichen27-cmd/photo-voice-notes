@@ -5,79 +5,93 @@
 <link rel="manifest" href="manifest.webmanifest"><title>離線筆記</title>
 <style>
 [hidden]{display:none !important}
-body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0;padding:12px;padding-bottom:calc(240px + env(safe-area-inset-bottom));max-width:640px;margin:auto}
-button,label.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4px 2px;border-radius:8px;border:0;background:#1f6feb;color:#fff}
-button.sec{background:#57606a}.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0;scroll-margin-bottom:240px}
-img{max-width:100%;border-radius:8px}textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
-textarea{min-height:80px}small,.hint{color:#666}
-.ver{color:#888;font-size:13px;text-align:center;margin:16px 0 4px}
-.legal{margin-top:0}
+html,body{height:100%}
+body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0 auto;max-width:480px;height:100dvh;overflow:hidden;display:flex;flex-direction:column;background:#fff;color:#222}
+button,label.btn,a.btn{display:inline-block;font-size:16px;padding:10px 14px;margin:4px 2px;border-radius:8px;border:0;background:#1f6feb;color:#fff;text-decoration:none;text-align:center}
+button.sec{background:#57606a}
+.card{border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0}
+img{max-width:100%;border-radius:8px}
+textarea,input{width:100%;min-height:44px;font-size:16px;box-sizing:border-box}
+textarea{min-height:80px}
+small,.hint{color:#666}
+.ver{color:#888;font-size:13px;text-align:center;margin:8px 0}
 .legal a{color:#9d1e19}
 #updatebanner{display:block;width:100%;margin:8px 0;background:#9d1e19}
-.active-name{font-size:22px;font-weight:700;margin:4px 0}
-.track-live{font-weight:700;color:#9d1e19;min-height:1.4em}
-.track-row{padding:6px 0;border-top:1px solid #eee}
-.folder-row{border-top:1px solid #eee;padding:8px 0}
-.fname{font-weight:600;margin-bottom:4px}
-label.field{display:block;margin-top:8px;color:#333}
-#startTrack,#stopTrack,#sendDay{min-height:48px;font-size:18px}
-#sendDay{display:block;width:100%;margin-top:8px}
+.topbar{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top));border-bottom:1px solid #eee}
+.topbar .active-name{flex:1;font-size:22px;font-weight:700;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#openFolders{width:48px;height:48px;margin:0;padding:0;font-size:26px;background:#fff;color:#9d1e19;border:1px solid #eee}
+#backHome{margin:0;background:#fff;color:#9d1e19;border:1px solid #eee}
+#home{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.stage{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;padding:12px 16px;overflow:hidden}
+.track-live{font-weight:700;color:#9d1e19;min-height:1.4em;font-size:20px;text-align:center}
+#startTrack,#stopTrack{display:block;width:100%;min-height:52px;font-size:18px;margin-top:12px}
+#model{margin-top:16px;text-align:center}
+.dock{flex:none;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid #eee}
 #recthumb{display:block;width:96px;height:96px;object-fit:cover;border-radius:12px;margin:0 auto 8px;background:#eee}
-.dock{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);box-shadow:0 -2px 12px rgba(0,0,0,.12)}
-.dock-inner{max-width:640px;margin:auto}
-.dock .big{display:block;width:100%;box-sizing:border-box;text-align:center;font-size:28px;font-weight:700;padding:20px 16px;margin:0;border-radius:16px;background:#1f6feb;color:#fff}
-.dock-acts{display:flex;gap:8px}
-.dock-acts .big{flex:1;font-size:22px;padding:18px 8px}
+.dock .big{display:block;width:100%;box-sizing:border-box;text-align:center;font-size:22px;font-weight:700;padding:16px 8px;margin:0;border-radius:16px;background:#1f6feb;color:#fff;min-height:64px}
+.dock-acts{display:flex;flex-direction:column;gap:8px}
+#saveZip{background:#9d1e19}
 .dock .rec-on{background:#9d1e19}
 .rec-ind{display:flex;align-items:center;justify-content:center;gap:8px;font-size:22px;font-weight:700;color:#9d1e19;margin-bottom:8px}
 .rec-ind .dot{width:14px;height:14px;border-radius:50%;background:#9d1e19;animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.35}}
+#folderPage{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.sheet{flex:1;min-height:0;overflow:auto;padding:12px 12px 32px}
+.track-row{padding:6px 0;border-top:1px solid #eee}
+.folder-row{border-top:1px solid #eee;padding:8px 0}
+.fname{font-weight:600;margin-bottom:4px}
+.gpxnames{display:block;margin:4px 0}
+label.field{display:block;margin-top:8px;color:#333}
+#openFiles{display:block;margin-top:16px;background:#57606a}
 </style></head>
-<body><h2>離線筆記</h2>
-<div class="card">
-  <div>目前資料夾</div>
-  <div id="activeName" class="active-name">未分類</div>
-  <div class="hint">先選這一天或這一趟，開始記錄軌跡。下方可拍照，或只按錄音筆記。一天結束再停止軌跡、送到記錄高高手。</div>
-  <div id="trackbox">
-    <div id="trackstat" class="track-live"></div>
+<body>
+<div id="home">
+  <header class="topbar">
+    <div id="activeName" class="active-name">未分類</div>
+    <button type="button" id="openFolders" aria-label="資料夾">📁</button>
+  </header>
+  <div class="stage">
+    <div id="trackstat" class="track-live">尚未記錄軌跡</div>
     <button type="button" id="startTrack">開始記錄軌跡</button>
     <button type="button" id="stopTrack" hidden>停止記錄軌跡</button>
-    <button type="button" id="sendDay">☁️ 送到記錄高高手</button>
     <div id="trackresume" hidden></div>
     <p class="hint" id="tracknote">iPhone 打開相機或鎖定螢幕時會暫停定位。回到這個畫面會自動繼續記。請不要鎖定螢幕。</p>
-    <div id="tracklist"></div>
     <div id="trackmsg" class="hint"></div>
+    <div id="model"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button type="button" id="dl">下載模型（約 80 MB，僅需一次）</button></div>
+    <p id="appver" class="ver"></p>
+    <button type="button" id="updatebanner" hidden>有新版，點此更新</button>
   </div>
-  <label class="field">新資料夾名稱<input id="folderName" autocomplete="off"></label>
-  <button type="button" id="createFolder">建立並使用</button>
-  <div id="folders"></div>
-  <small id="upstat"></small>
-</div>
-<h3>此資料夾的筆記</h3>
-<div id="list"></div>
-<div id="model" class="card"><b>語音辨識模型</b>：<span id="mstat">檢查中…</span><br><button type="button" id="dl">下載模型（約 80 MB，僅需一次）</button></div>
-<div class="card">
-  <b>Google Drive</b>
-  <div class="hint">上傳需要網路。Client ID 存在這台手機，不會連同筆記送出。</div>
-  <label class="field">OAuth Client ID<input id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxx.apps.googleusercontent.com"></label>
-  <button type="button" id="saveClient" class="sec">儲存 Client ID</button>
-</div>
-<p id="appver" class="ver"></p>
-<p class="ver legal"><a href="privacy.html">隱私權</a> · <a href="terms.html">使用條款</a></p>
-<button type="button" id="updatebanner" hidden>有新版，點此更新</button>
-<div id="dock" class="dock"><div class="dock-inner">
-  <img id="recthumb" alt="這張照片" hidden>
-  <div id="recind" class="rec-ind" hidden><span class="dot"></span>錄音中</div>
-  <button type="button" id="halt" class="big rec-on" hidden>停止錄音</button>
-  <button type="button" id="speak" class="big" hidden>🎙 開始錄音</button>
-  <div class="dock-acts">
-    <label id="shoot" class="big">📷 拍照<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
-    <button type="button" id="vnote" class="big">🎙 錄音筆記</button>
+  <div id="dock" class="dock">
+    <img id="recthumb" alt="這張照片" hidden>
+    <div id="recind" class="rec-ind" hidden><span class="dot"></span>錄音中</div>
+    <button type="button" id="halt" class="big rec-on" hidden>停止錄音</button>
+    <button type="button" id="speak" class="big" hidden>🎙 開始錄音</button>
+    <div class="dock-acts" id="actions">
+      <label id="shoot" class="big">📷 拍照<input id="cam" type="file" accept="image/*" capture="environment" hidden></label>
+      <button type="button" id="vnote" class="big">🎙 錄音筆記</button>
+      <button type="button" id="saveZip" class="big">💾 匯出 zip</button>
+    </div>
+    <div id="capmsg" class="hint"></div>
   </div>
-  <div id="capmsg" class="hint"></div>
-</div></div>
+</div>
+<section id="folderPage" hidden>
+  <header class="topbar">
+    <button type="button" id="backHome">← 返回</button>
+    <div class="active-name">資料夾</div>
+  </header>
+  <div class="sheet">
+    <label class="field">新資料夾名稱<input id="folderName" autocomplete="off" placeholder="輸入名稱"></label>
+    <button type="button" id="createFolder">開新資料夾</button>
+    <div id="folders"></div>
+    <h3 id="folderDetailTitle">筆記</h3>
+    <div id="list"></div>
+    <div id="tracklist"></div>
+    <a id="openFiles" class="btn" href="shareddocuments://">打開「檔案」</a>
+    <p class="hint" id="fileshint">zip 存在你按「儲存到檔案」時選的位置。這個按鈕只會打開「檔案」，不能指定資料夾。</p>
+    <p class="ver legal"><a href="privacy.html">隱私權</a> · <a href="terms.html">使用條款</a></p>
+  </div>
+</section>
 <script src="version.js"></script>
-<script src="config.js"></script>
 <script src="vendor/cn2t.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script src="app.js"></script>
