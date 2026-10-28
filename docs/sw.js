@@ -1,6 +1,6 @@
 importScripts('version.js');
 const V=self.APP_CACHE;
-const SHELL=['./','index.html','version.js','app.js','config.js','worker.js','manifest.webmanifest','icon-192.png','icon-512.png','icon-512-maskable.png','apple-touch-icon.png','favicon.ico','favicon-32.png','vendor/transformers.min.js','vendor/ort-wasm-simd-threaded.jsep.mjs','vendor/ort-wasm-simd-threaded.jsep.wasm','vendor/cn2t.js','vendor/jszip.min.js'];
+const SHELL=['./','index.html','version.js','app.js','worker.js','manifest.webmanifest','icon-192.png','icon-512.png','icon-512-maskable.png','apple-touch-icon.png','favicon.ico','favicon-32.png','vendor/transformers.min.js','vendor/ort-wasm-simd-threaded.jsep.mjs','vendor/ort-wasm-simd-threaded.jsep.wasm','vendor/cn2t.js','vendor/jszip.min.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL))));
 self.addEventListener('message',e=>{if(e.data&&e.data.type==='skip-waiting') self.skipWaiting();});
 self.addEventListener('activate',e=>e.waitUntil((async()=>{
